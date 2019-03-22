@@ -2354,4 +2354,3 @@ void sendCfgToRouterId(char *routerId)
     }
 }
  
-
