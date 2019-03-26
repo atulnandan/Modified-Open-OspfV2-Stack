@@ -245,3 +245,4 @@ void PatTree::clear_subtree(PatEntry *entry)
         clear_subtree(entry->oneptr);
     delete entry;
 }
+
