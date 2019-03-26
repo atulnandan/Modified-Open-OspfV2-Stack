@@ -227,3 +227,4 @@ PriQElt *PriQ::priq_rmhead()
 	priq_delete(top);
 	return(top);
 }
+
