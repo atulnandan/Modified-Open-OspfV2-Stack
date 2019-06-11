@@ -1,3 +1,21 @@
+/*
+ *   OSPFD routing daemon
+ *   Copyright (C) 1998 by John T. Moy
+ *   
+ *   This program is free software; you can redistribute it and/or
+ *   modify it under the terms of the GNU General Public License
+ *   as published by the Free Software Foundation; either version 2
+ *   of the License, or (at your option) any later version.
+ *   
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *   
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ */
 
 /* Routine implementing AVL trees.
  * These are handled by the AVLitem and AVLtree
@@ -7,7 +25,6 @@
 #include "machdep.h"
 #include "stack.h"
 #include "avl.h"
-#include <stdio.h>
 
 /* Constructor for an AVLitem, Initialize the values
  * of the keys, and set the pointers to NULL and the balance
@@ -131,7 +148,9 @@ void AVLtree::clear()
 void AVLtree::add(AVLitem *item)
 
 {
-	AVLitem* p=NULL,*ya=NULL,*fya=NULL,*fp=NULL,*s=NULL,*gs=NULL,*ffp=NULL;
+    AVLitem **parent_ptr;
+    AVLitem **balance_ptr;
+    AVLitem *ptr;
     uns32 index1;
     uns32 index2;
     AVLitem *sllprev;
@@ -139,160 +158,88 @@ void AVLtree::add(AVLitem *item)
     item->in_db = 1;
     index1 = item->_index1;
     index2 = item->_index2;
+    balance_ptr = &_root;
     instance++;
 
-	p = ya = _root;
-
-	//Find the insert point
-	while(p != NULL)
-	{
-#if 0	
-		if(node->key == p->key) 
-			return;
-#endif
-	
-		if(p->balance != 0)
-		{
-			ya = p; 
-			fya = fp;
-		}
-		ffp = fp;
-		fp = p;
-		if(index1 < p->_index1)
-			p = p->left;
-		else if(index1 > p->_index1)
-			p = p->right;
-		else if(index2 < p->_index2)
-			p = p->left;
-		else if(index2 > p->_index2)
-			p = p->right;
-		else {
-			//printf("add(): replacing entry for index1:%x index2:%x\n", item->_index1,item->_index2);
-			// Replace current entry
-			if(ffp == NULL)
-				_root = item;
-			else {
-				if(ffp->left == p)
-					ffp->left = item;
-				else if(ffp->right == p)
-					ffp->right = item;
-			}
-			item->right = p->right;
-			item->left = p->left;
-			item->balance = p->balance;
-			// Update ordered singly linked list
-			item->sll = p->sll;
-			if (!(sllprev = previous(index1, index2)))
-			sllhead = item;
-			else
-			sllprev->sll = item;
-			p->in_db = 0;
-			p->chkref();
-			return;
-		}
-	}
-
-	if(!_root) {
-		_root = item;
+    for (parent_ptr = &_root; (ptr = *parent_ptr); ) {
+	// Remember balance point's parent
+	if (ptr->balance != 0)
+	    balance_ptr = parent_ptr;
+	// Search for insertion point
+	if (index1 > ptr->_index1)
+	    parent_ptr = &ptr->right;
+	else if (index1 < ptr->_index1)
+	    parent_ptr = &ptr->left;
+	else if (index2 > ptr->_index2)
+	    parent_ptr = &ptr->right;
+	else if (index2 < ptr->_index2)
+	    parent_ptr = &ptr->left;
+	else {
+	    // Replace current entry
+	    *parent_ptr = item;
+	    item->right = ptr->right;
+	    item->left = ptr->left;
+	    item->balance = ptr->balance;
 	    // Update ordered singly linked list
-	    if (!(sllprev = previous(index1, index2))) {
-		//printf("\nadd()[_root case:sllprev NULL]: previous(%x, %x)\n", index1, index2);
-		item->sll = sllhead;
+	    item->sll = ptr->sll;
+	    if (!(sllprev = previous(index1, index2)))
 		sllhead = item;
-	    }
-	    else {
-		//printf("\nadd()[_root case:sllprev not NULL]: previous(%x, %x)\n", index1, index2);
-		item->sll = sllprev->sll;
+	    else
 		sllprev->sll = item;
-    	}
-		count++;
-		return;
+	    ptr->in_db = 0;
+	    ptr->chkref();
+	    return;
 	}
+    }
 
-	if(fp) {
-		
-		if(index1 < fp->_index1)
-			fp->left = item;
-		else if(index1 > fp->_index1)
-			fp->right = item;
-		else if(index2 < fp->_index2)
-			fp->left = item;
-		else if(index2 > fp->_index2)
-			fp->right = item;		
+    // Insert into tree
+    *parent_ptr = item;
+    count++;
+
+    // Readjust balance, from balance point on down
+    for (ptr = *balance_ptr; ptr != item; ) {
+	if (index1 > ptr->_index1) {
+	    ptr->balance += 1;
+	    ptr = ptr->right;
 	}
-	count++;
-	
-	//Find the son of ya in the direction of imbalance
-	if(index1 < ya->_index1) {
-		s = ya->left;
-	} else if(index1 > ya->_index1) {
-		s = ya->right;
-	} else if(index2 < ya->_index2) {
-		s = ya->left;
-	} else if(index2 > ya->_index2) {
-		s = ya->right;
+	else if (index1 < ptr->_index1) {
+	    ptr->balance -= 1;
+	    ptr = ptr->left;
 	}
-
-	//Adjust the balances from ya(youngest ancestor) down the inserted node.
-	p = ya;
-	while(p != NULL)
-	{
-		if(p == item)
-			break;
-		if(index1 < p->_index1) {
-			p->balance--;
-			p = p->left;
-		} else if(index1 > p->_index1) {
-			p->balance++;
-			p = p->right;
-		} else if(index2 < p->_index2) {
-			p->balance--;
-			p = p->left;
-		} else if(index2 > p->_index2) {
-			p->balance++;
-			p = p->right;
-		}
+	else if (index2 > ptr->_index2) {
+	    ptr->balance += 1;
+	    ptr = ptr->right;
 	}
+	else if (index2 < ptr->_index2) {
+	    ptr->balance -= 1;
+	    ptr = ptr->left;
+	}
+    }
 
-
-	//Check if tree is unbalanced and rotate accordingly.
-	p = ya;
-	if(p->balance == -2) {
-			if(p->left->balance == 1)
-				ya = shiftLeftThenRight(ya, s, s->right);
-			else
-				ya = shiftRight(ya, s);
-	} else if(p->balance == 2) {
-		if(p->right->balance == -1)
-				ya = shiftRightThenLeft(ya, s, s->left);
-			else
-				ya = shiftLeft(ya, s);
-	} 
-
-	if(fya == NULL)
-		_root = ya;
+    // If necessary, shift to return balance
+    ptr = *balance_ptr;
+    if (ptr->balance == 2) {
+	if (ptr->right->balance == -1)
+	    dbl_left_shift(balance_ptr);
 	else
-		if(index1 < fya->_index1)
-			fya->left = ya;
-		else if(index1> fya->_index1)
-			fya->right = ya;
-		else if(index2 < fya->_index2)
-			fya->left = ya;
-		else if(index2 > fya->_index2)
-			fya->right = ya;		
-		
+	    left_shift(balance_ptr);
+    }
+    else if (ptr->balance == -2) {
+	if (ptr->left->balance == 1)
+	    dbl_right_shift(balance_ptr);
+	else
+	    right_shift(balance_ptr);
+    }
+
     // Update ordered singly linked list
     if (!(sllprev = previous(index1, index2))) {
-	//printf("\nadd()[sllprev NULL]: previous(%x, %x)\n", index1, index2);
 	item->sll = sllhead;
 	sllhead = item;
     }
     else {
-	//printf("\nadd()[sllprev not NULL]: previous(%x, %x)\n", index1, index2);
 	item->sll = sllprev->sll;
 	sllprev->sll = item;
     }
-	return;
 }
 
 
@@ -309,41 +256,38 @@ void AVLtree::add(AVLitem *item)
 void AVLtree::remove(AVLitem *item)
 
 {
-	AVLitem* p=NULL, *q=NULL, *fp=NULL, *fq=NULL, *child=NULL, *parent=NULL;
-	short imbal = 0;
-	bool rotationDone = false;
-    bool unbal2NodeWithRChild0Bal = false;
-    bool unbal2NodeWithLChild0Bal = false;
-    uns32 index1 = item->_index1;
-    uns32 index2 = item->_index2;
-	Stack stack;
-	AVLitem *sllprev;
-	
-	
-	p = _root;
-	fp = NULL;
-	parent = NULL;
-	
-	//Find the correct node holder for the key.
-	while(p != NULL) {
-		
-		if(p == item)
-			break;
-		fp = p;
-		stack.push((void *)p);
-		if(index1 < p->_index1) {
-			p = p->left;
-		} else if(index1 > p->_index1) {
-			p = p->right;
-		} else 	if(index2 < p->_index2) {
-			p = p->left;
-		} else if(index2 > p->_index2) {
-			p = p->right;
-		}
-	}
+    AVLitem **parent_ptr;
+    AVLitem *ptr;
+    uns32 index1;
+    uns32 index2;
+    Stack stack;
+    AVLitem **item_parent;
+    AVLitem **prev;
+    AVLitem *sllprev;
 
-	if(!p || p != item)
-		return;
+    index1 = item->_index1;
+    index2 = item->_index2;
+
+    for (parent_ptr = &_root; (ptr = *parent_ptr); ) {
+	// Have we found element to be deleted?
+	if (ptr == item)
+	    break;
+	// Add to stack for later balancing
+	stack.push((void *) parent_ptr);
+	// Search for item
+	if (index1 > ptr->_index1)
+	    parent_ptr = &ptr->right;
+	else if (index1 < ptr->_index1)
+	    parent_ptr = &ptr->left;
+	else if (index2 > ptr->_index2)
+	    parent_ptr = &ptr->right;
+	else if (index2 < ptr->_index2)
+	    parent_ptr = &ptr->left;
+    }
+
+    // Deletion failed
+    if (ptr != item)
+	return;
 
     instance++;
     count--;
@@ -352,280 +296,207 @@ void AVLtree::remove(AVLitem *item)
 	sllhead = item->sll;
     else
 	sllprev->sll = item->sll;
-	
-	if(!p->left && !p->right) {
-		child = NULL;
-		if(fp) {
-			if(fp->left == p) {
-				fp->left = NULL;
-				imbal = 1;
-			} else if(fp->right == p) {
-				fp->right = NULL;
-				imbal = -1;
-			}
-		}else {
-            /* Special case of only one element: root. */
-            _root = NULL;
-       }		
-	} else if(!p->right) {
-		child = p->left;
-		if(fp) {
-			if(fp->left == p)
-				fp->left = child;
-			else if(fp->right == p)
-				fp->right = child;
-		}else {
-            /* Special case of only two elements: root and left child. */
-            _root = p->left; 
-		}
-	} else if(!p->left) {
-		child = p->right;
-		if(fp) {
-			if(fp->left == p)
-				fp->left = child;
-			else if(fp->right == p)
-				fp->right = child;
-		}else {
-            /* Special case of only two elements: root and left child. */
-            _root = p->right; 
-		}		
-		
-	} else {
-		/* Find the previous no in inorder which will guarantee it's right ptr is NULL. Later on, node to be deleted can be exchanged with this previous node. */
-		if(p->left->right != NULL) {
-			stack.mark();
-			stack.push((void *)p);
-		} else {			
-			stack.mark();
-			stack.push((void *)p);
-		}
-		
-		fq = p;
-		q = p->left;
 
-		for(;q->right;) {
-			fq = q;
-			stack.push((void *)fq);
-			q = q->right;
-		}
-	
-	
-		/* Now exchange node to be deleted "p" with it's immediate previous node "q" */
-#if 0
-		printf("deleteNode->key:%d \n", p->key);
-		printf("newNode->key:%d \n", q->key);
-		if(fp)
-			printf("fp->key:%d \n", fp->key);
-		if(fq)
-			printf("fq->key:%d \n", fq->key);
-#endif
-		
-		if(fq == p) {
-			/* Node to be swapped is left child of node to be deleted */
-			child = q->left;
-			imbal = 1;
-		} else {
-			child = q->left;
-			imbal = -1;
-		}
-				
-		/* Delete newNode q from it's current location and adjust pointers. */
-		if(fq->left == q)
-			fq->left = q->left;
-		else if(fq->right == q)
-			fq->right = q->left;
-		
-		//Swap entries.
-		q->left = p->left;
-		q->right = p->right;
-		q->balance = p->balance;
-		
-		/* Adjust child pointer of parent of newly inserted node except root pointer. */
-		if(fp) {
-			if(fp->left == p)
-				fp->left = q;
-			else if(fp->right == p)
-				fp->right = q;
-		}
-		
-		stack.replace_mark((void *)q);
-
-		/* If node to be replaced is _root itself, update _root pointer accordingly */
-		if(_root == item)
-			_root = q;
+    // Remove item from btree
+    if (!item->right)
+	*parent_ptr = item->left;
+    else if (!item->left)
+	*parent_ptr = item->right;
+    // If necessary, swap with previous to get NULL pointer
+    else {
+	item_parent = parent_ptr;
+	stack.push((void *) parent_ptr);
+	parent_ptr = &item->left;
+	stack.mark();
+	for (ptr = *parent_ptr; ptr->right; ptr = *parent_ptr) {
+	    stack.push((void *) parent_ptr);
+	    parent_ptr = &ptr->right;
 	}
-	
-	// Go back up stack, adjusting balance where necessary;
-	for(;(parent = (AVLitem *)stack.pop()) != NULL;child = parent) {
-
-		if(rotationDone) {
-			//rotation case, we can keep any indication flag for rotation instead of long check.
-			if(child->_index1 < parent->_index1)
-				parent->left = child;
-			else if(child->_index1 > parent->_index1)
-				parent->right = child;
-			else if(child->_index2 < parent->_index2)
-				parent->left = child;
-			else if(child->_index2 > parent->_index2)
-				parent->right = child;
-			
-			
-			rotationDone = false;
-            if(unbal2NodeWithRChild0Bal || unbal2NodeWithLChild0Bal) {
-                //printf("unbal2NodeWithRChild0Bal || unbal2NodeWithLChild0Bal case. \n");
-                break;
-            }
-		}
-		
-		if(child == NULL) {
-			parent->balance += imbal;	
-		} else if(parent->left == child)
-			parent->balance++;
-		else if(parent->right == child)
-			parent->balance--;
-		
-		if(parent->balance == 0)
-			continue;
-		
-		//Check if tree is unbalanced and rotate accordingly.
-		if(parent->balance == -2) {
-			rotationDone = true;
-			if(parent->left->balance == 1)
-				parent = shiftLeftThenRight(parent, parent->left, parent->left->right);
-			else if(parent->left->balance == -1)
-				parent = shiftRight(parent, parent->left);
-            else {
-				parent = shiftRight(parent, parent->left);
-                unbal2NodeWithLChild0Bal = true;
-            }
-		} else if(parent->balance == 2) {
-			rotationDone = true;
-			if(parent->right->balance == -1)
-				parent = shiftRightThenLeft(parent, parent->right, parent->right->left);
-			else if(parent->right->balance == 1)
-				parent = shiftLeft(parent, parent->right);
-            else {
-				parent = shiftLeft(parent, parent->right);
-                unbal2NodeWithRChild0Bal = true;
-            }
-		} else
-			break;
-	}
-	
-	if(stack.is_empty()) {
-		_root = parent;
-	}
-	
-	if(parent == NULL)
-		_root = child;
-
-	item->in_db = 0;
-	return;
-}
-
-AVLitem* leftRotate(AVLitem *ya) 
-{
-	AVLitem* p,*q;
-	
-	p = ya->right;
-	q = p->left;
-	p->left = ya;
-	ya->right = q;
-
-    return p;
-
-}
-
-AVLitem* rightRotate(AVLitem *ya)
-{
-	AVLitem* p,*q;
-	
-	p = ya->left;
-	q = p->right;
-	p->right = ya;
-	ya->left = q;
-
-    return p;
-
-}
-AVLitem* shiftLeft(AVLitem *ya, AVLitem *s)
-{
-	//Left rotate around ya(youngest ancestor)
-	leftRotate(ya);
-
-	//Update balances of ya and son of ya in the direction of imbalance.
-	if(s->balance == 1) {
-		s->balance = 0;
-		ya->balance = 0;
-	} else {
-        s->balance = -1;
-        ya->balance = 1;
+	// Remove item from btree
+	*parent_ptr = ptr->left;
+	// Swap item and previous
+	*item_parent = ptr;
+	ptr->right = item->right;
+	ptr->left = item->left;
+	ptr->balance = item->balance;
+	// Replace stack element that was item
+	if (parent_ptr == &item->left)
+	    parent_ptr = &ptr->left;
+	else
+	    stack.replace_mark((void *) &ptr->left);
     }
-	return s;
-}
 
-AVLitem* shiftRight(AVLitem *ya, AVLitem *s)
-{
-	//Right rotate around ya(youngest ancestor)
-	rightRotate(ya);
-	
-	//Update balances of ya and son of ya in the direction of imbalance.
-	if(s->balance == -1) {
-		s->balance = 0;
-		ya->balance = 0;
-	} else {
-        s->balance = 1;
-        ya->balance = -1;
+    // Go back up stack, adjusting balance where necessary;
+    for (; (prev = (AVLitem **) stack.pop()) != 0; parent_ptr = prev) {
+	AVLitem *parent;
+	parent = *prev;
+	if (parent_ptr == &parent->left)
+	    parent->balance++;
+	else if (parent_ptr == &parent->right)
+	    parent->balance--;
+	// tree has shrunken if balance now zero
+	if (parent->balance == 0)
+	    continue;
+	// If out-of-balance, shift
+	// Continue only if tree has then shrunken
+	else if (parent->balance == 2) {
+	    if (parent->right->balance == -1)
+		dbl_left_shift(prev);
+	    else if (parent->right->balance == 1)
+		left_shift(prev);
+	    else {
+		left_shift(prev);
+		break;
+	    }
+	}
+	else if (parent->balance == -2) {
+	    if (parent->left->balance == 1)
+		dbl_right_shift(prev);
+	    else if (parent->left->balance == -1)
+		right_shift(prev);
+	    else {
+		right_shift(prev);
+		break;
+	    }
+	}
+	else
+	    break;
     }
-	return s;
 
+    item->in_db = 0;
 }
-AVLitem * shiftLeftThenRight(AVLitem *ya, AVLitem *s, AVLitem *gs)
+
+
+/* Part of the tree balancing process. Single left shift restores balance
+ * when the parent has balance of +2, and its right child has balance
+ * of +1 or 0. If right child has balance of -1, a double left shift
+ * is necessary.
+ */
+
+void left_shift(AVLitem **balance_ptr)
+
 {
-	//Left rotate around ya(youngest ancestor)
-	ya->left = leftRotate(s);
-	rightRotate(ya);
+    AVLitem *node_b;
+    AVLitem *node_c;
 
-	//Update balances of ya, son of ya, grandson of ya in the direction of imbalance.
-	if(gs->balance == -1) {
-		ya->balance = 1;
-		s->balance = 0;
-		gs->balance = 0;
-	} else if(gs->balance == 1) {
-		ya->balance = 0;
-		s->balance = -1;
-		gs->balance = 0;		
-	} else if(gs->balance == 0) {
-		ya->balance = 0;
-		s->balance = 0;
-		gs->balance = 0;				
-	}
-	return gs;
+    node_b = *balance_ptr;
+    node_c = node_b->right;
+    *balance_ptr = node_c;
+    node_b->right = node_c->left;
+    node_c->left = node_b;
 
+    if (node_c->balance == 1) {
+	node_c->balance = 0;
+	node_b->balance = 0;
+    }
+    else {
+	node_c->balance = -1;
+	node_b->balance = 1;
+    }
 }
-AVLitem* shiftRightThenLeft(AVLitem *ya, AVLitem *s, AVLitem *gs)
+
+
+/* Double left shift. Necessary when the parent balance is +2, and the
+ * right child's balance is -1. Returns depth change of tree.
+ */
+
+void dbl_left_shift(AVLitem **balance_ptr)
+
 {
-	//Right rotate around ya(youngest ancestor)
-	ya->right=rightRotate(s);
-	leftRotate(ya);
-	
-	//Update balances of ya and son of ya in the direction of imbalance.
-	if(gs->balance == 1) {
-		ya->balance = -1;
-		s->balance = 0;
-		gs->balance = 0;
-	} else if(gs->balance == -1) {
-		ya->balance = 0;
-		s->balance = 1;
-		gs->balance = 0;						
-	} else if(gs->balance == 0) {
-		ya->balance = 0;
-		s->balance = 0;
-		gs->balance = 0;
-	}
-	return gs;
+    AVLitem *node_b;
+    AVLitem *node_d;
+    AVLitem *node_c;
 
+    node_b = *balance_ptr;
+    node_d = node_b->right;
+    node_c = node_d->left;
+    *balance_ptr = node_c;
+    node_b->right = node_c->left;
+    node_d->left = node_c->right;
+    node_c->right = node_d;
+    node_c->left = node_b;
+
+    if (node_c->balance == -1) {
+	node_b->balance = 0;
+	node_c->balance = 0;
+	node_d->balance = 1;
+    }
+    else if (node_c->balance == 1) {
+	node_b->balance = -1;
+	node_c->balance = 0;
+	node_d->balance = 0;
+    }
+    else {
+	node_b->balance = 0;
+	node_c->balance = 0;
+	node_d->balance = 0;
+    }
+}	
+
+
+/* Part of the tree balancing process. Single right shift is the mirror
+ * image of the single left shift above, and is invoked when the parent
+ * has balance of -2, and its left child a balance of -1 or 0. If the
+ * left child's balance is 1, a double right shift is necessary.
+ */
+
+void right_shift(AVLitem **balance_ptr)
+
+{
+    AVLitem *node_c;
+    AVLitem *node_b;
+
+    node_c = *balance_ptr;
+    node_b = node_c->left;
+    *balance_ptr = node_b;
+    node_c->left = node_b->right;
+    node_b->right = node_c;
+
+    if (node_b->balance == -1) {
+	node_b->balance = 0;
+	node_c->balance = 0;
+    }
+    else {
+	node_b->balance = 1;
+	node_c->balance = -1;
+    }
 }
+
+/* Double right shift. Mirror image of the double left shift above.
+ */
+
+void dbl_right_shift(AVLitem **balance_ptr)
+
+{
+    AVLitem *node_d;
+    AVLitem *node_b;
+    AVLitem *node_c;
+
+    node_d = *balance_ptr;
+    node_b = node_d->left;
+    node_c = node_b->right;
+    *balance_ptr = node_c;
+    node_d->left = node_c->right;
+    node_b->right = node_c->left;
+    node_c->left = node_b;
+    node_c->right = node_d;
+
+    if (node_c->balance == 1) {
+	node_d->balance = 0;
+	node_c->balance = 0;
+	node_b->balance = -1;
+    }
+    else if (node_c->balance == -1) {
+	node_d->balance = 1;
+	node_c->balance = 0;
+	node_b->balance = 0;
+    }
+    else {
+	node_d->balance = 0;
+	node_c->balance = 0;
+	node_b->balance = 0;
+    }
+}	
 
 /* Establish point at which AVL search will begin. First item returned
  * by next will have keys immediately following those specified to this
@@ -680,49 +551,3 @@ AVLitem *AVLsearch::next()
     c_index2 = current->_index2;
     return(current);
 }
-
-/*
- * Display AVL Tree
- */
-
-void AVLsearch::displayTree()
-{
-    int i;
-    if (!tree->_root)
-	return;
-	display(tree->_root, 1);
-	printf("\n");
-	AVLitem *ptr1;
-	AVLitem *next;
-	for(ptr1= tree->_root;ptr1->left;)
-		ptr1=ptr1->left;
-    for (; ptr1; ptr1 = next) {
-	next = ptr1->sll;
-	printf("%x\n", ptr1);
-    }
-	printf("\n");
-	printf("tree->sllhead: %x", tree->sllhead);
-}
-
-/*
- * Display AVL Tree
- */
-void AVLsearch::display(AVLitem* ptr, int level)
-{
-    int i;
-
-    if (ptr!=NULL)
-    {
-        display(ptr->right, level + 1);
-		printf("\n");
-        if (ptr == tree->_root) {
-			printf("Root -> ");
-		}
-        for (i = 0; i < level && ptr != tree->_root; i++) {
-			printf("        ");
-		}
-		printf("%x,%x,%d,%d,%d,%x", ptr->_index1, ptr->_index2,ptr->balance, ptr->in_db,ptr->refct,ptr->sll);
-        display(ptr->left, level + 1);
-    }
-}
-
