@@ -1,21 +1,3 @@
-/*
- *   OSPFD routing daemon
- *   Copyright (C) 1998 by John T. Moy
- *   
- *   This program is free software; you can redistribute it and/or
- *   modify it under the terms of the GNU General Public License
- *   as published by the Free Software Foundation; either version 2
- *   of the License, or (at your option) any later version.
- *   
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *   
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
- */
 
 /* Routines implemneting the generic Patricia tree.
  */
@@ -58,23 +40,18 @@ void PatTree::init()
 PatEntry *PatTree::find(byte *key, int keylen)
 
 {
-    PatEntry *entry;
-    uns32 chkbit;
+    PatEntry  *p = NULL, *t = root;
+    unsigned int    i;
 
-    entry = root;
-    do {
-	chkbit = entry->chkbit;
-	if (bit_check(key, keylen, chkbit))
-	    entry = entry->oneptr;
-	else
-	    entry = entry->zeroptr;
-    } while (entry->chkbit > chkbit);
+    for(i=t->chkbit;;i=t->chkbit){
+        t = bit_check(key, keylen, i) ? t->oneptr : t->zeroptr;
+        if(i >= t->chkbit)
+            break;
+    }
 
-    if (keylen == entry->keylen &&
-	memcmp(key, entry->key, keylen) == 0)
-	return(entry);
-
-    return(0);
+    if((keylen == t->keylen) && memcmp(key, t->key, t->keylen) == 0)
+        return t;
+    return NULL;
 }
 
 /* Find a particular character string. We assume that it is
@@ -91,6 +68,23 @@ PatEntry *PatTree::find(char *key)
     return(find((byte *) key, keylen));
 }
 
+PatEntry *PatTree::insert(PatEntry *child_node, PatEntry *node, unsigned int i,
+                                            PatEntry *parent_node)
+{
+    if((child_node->chkbit >= i) || (child_node->chkbit <= parent_node->chkbit)) {
+        node->chkbit = i;
+        node->zeroptr = bit_check(node->key, node->keylen, i) ? child_node : node;
+        node->oneptr = bit_check(node->key, node->keylen, i) ? node : child_node;
+        return node;
+    }
+
+    if(bit_check(node->key, node->keylen, child_node->chkbit))
+        child_node->oneptr = insert(child_node->oneptr, node, i, child_node);
+    else
+        child_node->zeroptr = insert(child_node->zeroptr, node, i, child_node);
+    return child_node;
+}
+
 /* Add an element to a Patricia tree. We assume that the caller
  * has verified that the key is not already in the tree.
  * Find the next bit to test,
@@ -100,53 +94,50 @@ PatEntry *PatTree::find(char *key)
 void PatTree::add(PatEntry *entry)
 
 {
-    PatEntry *ptr;
-    uns32 chkbit;
-    uns32 newbit;
-    PatEntry **parent;
+    unsigned int    i, keylen;
+    unsigned char   *key = NULL;
+    PatEntry   		*t = NULL;
 
-    ptr = root;
-    do {
-	chkbit = ptr->chkbit;
-	if (entry->bit_check(chkbit))
-	    ptr = ptr->oneptr;
-	else
-	    ptr = ptr->zeroptr;
-    } while (ptr->chkbit > chkbit);
 
-    // Find new bit to check
-    for (newbit = 0; ; newbit++) {
-	if (ptr->bit_check(newbit) != entry->bit_check(newbit))
-	    break;
+    if(!root || !entry)
+        return;
+
+    key = entry->key;
+    keylen = entry->keylen;
+
+    t = root;
+    /* Find closest matching leaf node */
+    for(i=t->chkbit ;; i=t->chkbit){
+        t = bit_check(key, keylen, i) ? t->oneptr : t->zeroptr;
+        if(i >= t->chkbit)
+            break;
+    }
+    /* Find the first bit that differs */
+    for(i=0; (i < (keylen << 3)) && (bit_check(key, keylen, i) == bit_check(t->key, t->keylen, i)); i++);
+
+    if((size == 0) || (root->chkbit > i)) {
+        /* First element or least chkbit element to be inserted as root at top. */
+        if(bit_check(key, keylen, i)) {
+            entry->zeroptr  = root;
+            entry->oneptr = entry;
+        } else {
+            entry->oneptr  = root;
+            entry->zeroptr = entry;
+        }
+        entry->chkbit = i;
+        root = entry;
+        size++;
+        return;
     }
 
-    // Find place to insert new element
-    parent = &root;
-    for (ptr = *parent; ptr->chkbit < newbit;) {
-	chkbit = ptr->chkbit;
-	if (entry->bit_check(chkbit))
-	    parent = &ptr->oneptr;
-	else
-	    parent = &ptr->zeroptr;
-
-	ptr = *parent;
-	if (ptr->chkbit <= chkbit)
-	    break;
-    }
-
-    // Insert into Patricia tree
-    *parent = entry;
-    // Set Patricia fields
-    entry->chkbit = newbit;
-    if (entry->bit_check(newbit)) {
-	entry->oneptr = entry;
-	entry->zeroptr = ptr;
-    }
-    else {
-	entry->zeroptr = entry;
-	entry->oneptr = ptr;
+    /* Recursive step */
+    if(bit_check(key, keylen, root->chkbit)) {
+            root->oneptr = insert(root->oneptr, entry, i, root);
+    } else {
+            root->zeroptr = insert(root->zeroptr, entry, i, root);
     }
     size++;
+    return;
 }
 
 /* Delete an element from the Patricia tree. After locating the
@@ -158,49 +149,73 @@ void PatTree::add(PatEntry *entry)
 void PatTree::remove(PatEntry *entry)
 
 {
-    PatEntry *ptr;
-    uns32 chkbit;
-    PatEntry *upptr;
-    PatEntry **parent;
-    PatEntry **upparent;
-    bool upzero;
-    PatEntry **fillptr;
+    PatEntry   		*p, *t;
+    PatEntry   		*gg = NULL; /*Great grandparent */
+	PatEntry		*g = NULL;
+    unsigned int    i, keylen;
+    unsigned char   *key = NULL;
+    bool            upleft, is_head_node_deleted = false;
 
-    ptr = root;
-    upptr = 0;
-    parent = &root;
-    upparent = &root;
-    fillptr = 0;
-    do {
-        if (ptr == entry && !fillptr)
-	    fillptr = parent;
-	upparent = parent;
-	upptr = ptr;
-	chkbit = ptr->chkbit;
-	if (entry->bit_check(chkbit))
-	    parent = &ptr->oneptr;
-	else
-	    parent = &ptr->zeroptr;
-	ptr = *parent;
-    } while (ptr->chkbit > chkbit);
+    key = entry->key;
+    keylen = entry->keylen;
 
-    // Entry not found?
-    if (ptr != entry)
-	return;
+    if(entry == NULL)
+            return;
 
-    upzero = (upptr->zeroptr == entry);
-    // Unlink upptr from downward tree
-    *upparent = (upzero ? upptr->oneptr : upptr->zeroptr);
-    // Entry points to self?
-    // If not, switch entry and upptr
-    // Upward pointer to upptr remains unchanged
-    if (upptr != entry) {
-        *fillptr = upptr;
-	upptr->chkbit = entry->chkbit;
-	upptr->oneptr = entry->oneptr;
-	upptr->zeroptr = entry->zeroptr;
+    /* For removal, we need to store parent and grandparent.
+ 	 * Find closest matching leaf node.
+ 	 */
+	p = g = t = root;
+    for(i=t->chkbit; ; i=t->chkbit){
+        if((t == entry) && (gg == NULL)) {
+            gg = p;
+        }
+        g = p;
+        p = t;
+        t = bit_check(key, keylen, i) ? t->oneptr : t->zeroptr;
+        if(i >= t->chkbit)
+            break;
     }
 
+    // Entry not found?
+    if (t != entry)
+	return;
+
+    upleft = (p->zeroptr == entry);
+    if(t == root)
+        is_head_node_deleted = true;
+
+    /* Unlink grandparent from downward tree correctly. */
+    if(bit_check(key, keylen, g->chkbit)) {
+        g->oneptr = (upleft ? p->oneptr : p->zeroptr);
+        /* If root itsef is getting deleted, changed root pointer correctly. */
+        if(is_head_node_deleted)
+            root = g->oneptr;
+    } else {
+        g->zeroptr = (upleft ? p->oneptr : p->zeroptr);
+        /* If root itsef is getting deleted, changed root pointer correctly. */
+        if(is_head_node_deleted)
+            root = g->zeroptr;
+    }
+
+    /* Entry points to self?
+ 	 * If not, switch entry.
+ 	 */
+    if (p != entry) {
+        /* If root itsef is getting deleted, changed root pointer correctly. */
+        if(is_head_node_deleted)
+            root = p;
+        else {
+	        if(bit_check(key, keylen, gg->chkbit))
+	            gg->oneptr = p;
+	        else
+	            gg->zeroptr = p;
+		}
+
+        p->chkbit = entry->chkbit;
+        p->oneptr = entry->oneptr;
+        p->zeroptr = entry->zeroptr;
+    }
     size--;
 }
 

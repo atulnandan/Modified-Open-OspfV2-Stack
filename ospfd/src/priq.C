@@ -1,21 +1,3 @@
-/*
- *   OSPFD routing daemon
- *   Copyright (C) 1998 by John T. Moy
- *   
- *   This program is free software; you can redistribute it and/or
- *   modify it under the terms of the GNU General Public License
- *   as published by the Free Software Foundation; either version 2
- *   of the License, or (at your option) any later version.
- *   
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *   
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
- */
 
 /* Routines implementing a priority queue. There are two standard
  * operations. priq_merge() merges two priority queues. Addition
@@ -41,77 +23,97 @@
 #include "machdep.h"
 #include "priq.h"
 
+/*
+ * Function to swap nodes in binary heap to maintain ascending binary heap.
+ */
+void PriQ::node_swap(PriQElt *parent_node, PriQElt *child_node)
+{
+    PriQElt   *left = NULL, *right = NULL;
+
+    left = child_node->left;
+    right = child_node->right;
+    child_node->parent = parent_node->parent;
+    if(child_node->parent == NULL)
+        root = child_node;
+    else {
+        if(child_node->parent->left == parent_node)
+            child_node->parent->left = child_node;
+        else if(child_node->parent->right == parent_node)
+            child_node->parent->right = child_node;
+    }
+    if(parent_node->left == child_node) {
+        child_node->left = parent_node;
+        child_node->right = parent_node->right;
+        if(child_node->right)
+            child_node->right->parent = child_node;
+    } else if(parent_node->right == child_node) {
+        child_node->right = parent_node;
+        child_node->left = parent_node->left;
+        if(child_node->left)
+            child_node->left->parent = child_node;
+    }
+    parent_node->left = left;
+    if(left)
+        left->parent = parent_node;
+    parent_node->right = right;
+    if(right)
+        right->parent = parent_node;
+    parent_node->parent = child_node;
+    return;
+}
+
+
 /* Add an element to a priority queue.
  */
 
-void PriQ::priq_add(PriQElt *item)
+void PriQ::priq_add(PriQElt *new_node)
 
 {
-    PriQ temp;
+    int     path = 0;
+    int     k = 0, n = 0;
+    PriQElt    *child = NULL, *last_node = NULL;
 
-    item->left = 0;
-    item->right = 0;
-    item->parent = 0;
-    item->dist = 1;
-    temp.root = item;
-    priq_merge(temp);
-}
+	if(new_node == NULL)
+		return;
+    new_node->left = NULL;
+    new_node->right = NULL;
+    new_node->parent = NULL;
 
-/* Merge two priority queues. Compare their heads. Assign the smallest
- * as the new head, and then merge its right subtree with the other
- * queue. This process then repeats. After reaching NULL (which, since
- * we're always dealing with right pointers, happens in O(log(n)). Go
- * back up the tree (which is why we keep parent pointers) adjusting
- * DIST(a) and flipping left and right when necessary.
- */
-
-void PriQ::priq_merge(PriQ & otherq)
-
-{
-    PriQElt *parent;
-    PriQElt *temp;
-    PriQElt *x;
-    PriQElt *y;
-
-    if (!otherq.root) {
-	if (root) root->parent = 0;
-	return;
+    n = 1 + nelts;
+    /*find the last node based on position*/
+    for(;n >= 2;n /= 2,k++) {
+        path = (path << 1) | (n & 1);
     }
-    else if (!root) {
-	root = otherq.root;
-	if (root) root->parent = 0;
-	return;
+
+    nelts++;
+    child = root;
+    if(!root) {
+        /*First element, just return;*/
+        root = new_node;
+        return;
     }
-    else {
-	y = otherq.root;
-	if (y->costs_less(root)) {
-	    temp = root;
-	    root = y;
-	    y = temp;
-	}
+    /*Traverse according to the path and find the last node*/
+    while(--k > 0) {
+        if(path & 1)
+            child = child->right;
+        else
+            child = child->left;
 
-	// Make sure that root's parent is NULL
-	root->parent = 0;
+        path = path >> 1;
+    }
 
-	// Merge right pointer with other queue
-	parent = root;
-	x = root->right;
+    last_node = child;
+    /*Insert the new node at this position*/
+    if(path & 1)
+        last_node->right = new_node;
+    else
+        last_node->left = new_node;
 
-	while (x) {
-	    if (y->costs_less(x)) {
-		temp = x;
-		x = y;
-		y = temp;
-	    }
-	    x->parent = parent;
-	    parent->right = x;
-	    parent = x;
-	    x = x->right;
-	}
+    new_node->parent = last_node;
 
-	parent->right = y;
-	y->parent = parent;
-	priq_adjust(parent, false);
+    /*Heapify by going up the ladder.*/
+    for(;new_node->parent && new_node->costs_less(new_node->parent);) {
+            node_swap(new_node->parent, new_node);
     }
 }
 
@@ -123,68 +125,90 @@ void PriQ::priq_merge(PriQ & otherq)
  * to the priority queue items.
  */
 
-void PriQ::priq_delete(PriQElt *item)
+void PriQ::priq_delete(PriQElt *new_node)
 
 {
-    PriQElt *parent;
-    PriQ q1;
-    PriQ q2;
+    int     path = 0;
+    int     k = 0, n = 0;
+    PriQElt   *child = NULL, *last_node = NULL, *parent = NULL, *smallest = NULL;
 
-    parent = item->parent;
-    q1.root = item->right;
-    q2.root = item->left;
-    q1.priq_merge(q2);
+    if(nelts == 0)
+        return;
 
-    if (!parent)
-	root = q1.root;
-    else if (parent->right == item)
-	parent->right = q1.root; 
-    else
-	parent->left = q1.root;
-    if (q1.root)
-	q1.root->parent = parent;
-
-    priq_adjust(parent, true);
-}
-
-/* Go back up the queue, readjusting the DIST() and
- * left and right pointers as necessary.
- * Used by both the priority queue merge and delete routines.
- */
-
-void PriQ::priq_adjust(PriQElt *balance_pt, int deleting)
-
-{
-    PriQElt *left;
-    PriQElt *right;
-
-    for (; balance_pt ; balance_pt = balance_pt->parent) {
-	uns32 new_dist;
-
-	left = balance_pt->left;
-	right = balance_pt->right;
-	
-	if (!right)
-	    new_dist = 1;
-	else if (!left) {
-	    balance_pt->left = right;
-	    balance_pt->right = 0;
-	    new_dist = 1;
-	}
-	else if (left->dist < right->dist) {
-	    balance_pt->left = right;
-	    balance_pt->right = left;
-	    new_dist = left->dist + 1;
-	}
-	else {
-	    new_dist = right->dist + 1;
-	}
-
-	if (new_dist != balance_pt->dist)
-	    balance_pt->dist = new_dist;
-	else if (deleting)
-	    break;
+    n = nelts;
+    /*find the last node based on position*/
+    for(;n >= 2;n /= 2,k++) {
+        path = (path << 1) | (n & 1);
     }
+
+    child = root;
+    /*Traverse according to the path and find the last node*/
+    while(k-- > 0) {
+        if(path & 1)
+            child = child->right;
+        else
+            child = child->left;
+
+        path = path >> 1;
+    }
+
+    last_node = child;
+    nelts--;
+
+    /*Unlink the parent of last node.*/
+    parent = last_node->parent;
+    if(parent) {
+        if(parent->left == last_node)
+            parent->left = NULL;
+        else
+            parent->right = NULL;
+    }
+
+    if(last_node == new_node) {
+        if(last_node == root)
+            root = NULL;
+        return;
+    }
+
+    /*Replace node to be deleted with last node.*/
+    last_node->parent = new_node->parent;
+
+    if(new_node->parent) {
+        if(new_node->parent->left == new_node)
+            new_node->parent->left = last_node;
+        else if (new_node->parent->right == new_node)
+            new_node->parent->right = last_node;
+    } else
+        root = last_node;
+
+    /*In the following code, only exception is if new_node is parent of last_node, that case has to be taken care.*/
+    last_node->left = new_node->left;
+    last_node->right = new_node->right;
+    if(last_node->left)
+        last_node->left->parent = last_node;
+    if(last_node->right)
+        last_node->right->parent = last_node;
+
+    /*Heapify*/
+    child = last_node;
+
+
+    /*Walk down the subtree*/
+    for(;;) {
+        smallest = child;
+        if(child->left != NULL && child->left->costs_less(smallest))
+            smallest = child->left;
+        if(child->right != NULL && child->right->costs_less(smallest))
+            smallest = child->right;
+
+        if(smallest == child)
+                break;
+        node_swap(child, smallest);
+    }
+
+    /*Walk up the subtree*/
+    while(child->parent != NULL && child->costs_less(child->parent))
+        node_swap(child->parent, child);
 }
 
 /* Take the top element off the priority queue.
@@ -196,15 +220,10 @@ PriQElt *PriQ::priq_rmhead()
 
 {
     PriQElt *top;
-    PriQ temp1;
-    PriQ temp2;
 
     if (!(top = root))
 	return(0);
 
-    temp1.root = top->left;
-    temp2.root = top->right;
-    temp1.priq_merge(temp2);
-    root = temp1.root;
-    return(top);
+	priq_delete(top);
+	return(top);
 }
