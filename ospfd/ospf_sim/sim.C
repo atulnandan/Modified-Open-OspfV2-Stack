@@ -1,21 +1,3 @@
-/*
- *   OSPFD routing simulation controller
- *   Copyright (C) 1999 by John T. Moy
- *   
- *   This program is free software; you can redistribute it and/or
- *   modify it under the terms of the GNU General Public License
- *   as published by the Free Software Foundation; either version 2
- *   of the License, or (at your option) any later version.
- *   
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *   
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
- */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +23,10 @@
 #include "simctl.h"
 #include <time.h>
 #include "mtrace.h"
+//ATUL
+#include <signal.h>
+#include<fcntl.h>
+
 
 /* Forward references
  */
@@ -48,31 +34,28 @@
 bool get_prefix(char *prefix, InAddr &net, InMask &mask);
 
 // Tk/Tcl callbacks
-void tick(ClientData);
-
-int StartRouter(ClientData, Tcl_Interp *, int, char *argv[]);
-int ToggleRouter(ClientData, Tcl_Interp *, int, char *argv[]);
-int RestartRouter(ClientData, Tcl_Interp *, int, char *argv[]);
-int HitlessRestart(ClientData, Tcl_Interp *, int, char *argv[]);
-int StartPing(ClientData, Tcl_Interp *, int, char *argv[]);
-int StopPing(ClientData, Tcl_Interp *, int, char *argv[]);
-int StartTraceroute(ClientData, Tcl_Interp *, int, char *argv[]);
-int StartMtrace(ClientData, Tcl_Interp *, int, char *argv[]);
-int PrefixMatch(ClientData, Tcl_Interp *, int, char *argv[]);
-int AddMapping(ClientData, Tcl_Interp *, int, char *argv[]);
-int AddNetMember(ClientData, Tcl_Interp *interp, int, char *argv[]);
-int TimeStop(ClientData, Tcl_Interp *, int, char *argv[]);
-int TimeResume(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendGeneral(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendArea(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendInterface(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendVL(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendNeighbor(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendAggregate(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendHost(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendExtRt(ClientData, Tcl_Interp *, int, char *argv[]);
-int SendGroup(ClientData, Tcl_Interp *, int, char *argv[]);
-int LeaveGroup(ClientData, Tcl_Interp *, int, char *argv[]);
+// ATUL
+void tick(int sig);
+/* ATUL */
+int StartRouter(ClientData, Tcl_Interp *, int, const char *argv[]);
+int PrefixMatch(ClientData, Tcl_Interp *, int, const char *argv[]);
+int AddMapping(ClientData, Tcl_Interp *, int, const char *argv[]);
+int AddNetMember(ClientData, Tcl_Interp *interp, int, const char *argv[]);
+int TimeStop(ClientData, Tcl_Interp *, int, const char *argv[]);
+int TimeResume(ClientData, Tcl_Interp *, int, const char *argv[]);
+/* ATUL */
+int read_config_file(char *cfgfile);
+void startRouterCfg();
+int StartRouterCopy(char *args[]);
+int SendGeneralCopy(char *args[]);
+int SendAreaCopy(char *args[]);
+int SendInterfaceCopy(char *args[]);
+int SendHostCopy(char *args[]);
+void sendCfgToRouterId(char *routerId);
+int AddMappingCopy(char *args[]);
+int AddNetMemberCopy(char *args[]);
+void sendAddMappingCfg();
+void sendAddNetMemberCfg();
 
 // Global variables
 char *sim_tcl_src = "/ospf_sim.tcl";
@@ -202,6 +185,11 @@ int main(int argc, char *argv[])
 	cfgfile = argv[1];
     interp = Tcl_CreateInterp();
     Tcl_AppInit(interp);
+	//Read the config file.
+	read_config_file(cfgfile);
+	startRouterCfg();
+	sendAddMappingCfg();
+	sendAddNetMemberCfg();
     // Main loop, never exits
     Tk_MainLoop();
     exit(0);
@@ -241,28 +229,11 @@ int Tcl_AppInit(Tcl_Interp *interp)
     }
     // Install C-language TCl commands
     Tcl_CreateCommand(interp, "startrtr", StartRouter, 0, 0);
-    Tcl_CreateCommand(interp, "togglertr", ToggleRouter, 0, 0);
-    Tcl_CreateCommand(interp, "rstrtr", RestartRouter, 0, 0);
-    Tcl_CreateCommand(interp, "hitlessrtr", HitlessRestart, 0, 0);
-    Tcl_CreateCommand(interp, "start_ping", StartPing, 0, 0);
-    Tcl_CreateCommand(interp, "stop_ping", StopPing, 0, 0);
-    Tcl_CreateCommand(interp, "start_traceroute", StartTraceroute, 0, 0);
-    Tcl_CreateCommand(interp, "start_mtrace", StartMtrace, 0, 0);
     Tcl_CreateCommand(interp, "prefix_match", PrefixMatch, 0, 0);
     Tcl_CreateCommand(interp, "add_mapping", AddMapping, 0, 0);
     Tcl_CreateCommand(interp, "add_net_membership", AddNetMember, 0, 0);
     Tcl_CreateCommand(interp, "time_stop", TimeStop, 0, 0);
     Tcl_CreateCommand(interp, "time_resume", TimeResume, 0, 0);
-    Tcl_CreateCommand(interp, "sendgen", SendGeneral, 0, 0);
-    Tcl_CreateCommand(interp, "sendarea", SendArea, 0, 0);
-    Tcl_CreateCommand(interp, "sendifc", SendInterface, 0, 0);
-    Tcl_CreateCommand(interp, "sendvl", SendVL, 0, 0);
-    Tcl_CreateCommand(interp, "sendnbr", SendNeighbor, 0, 0);
-    Tcl_CreateCommand(interp, "sendagg", SendAggregate, 0, 0);
-    Tcl_CreateCommand(interp, "sendhost", SendHost, 0, 0);
-    Tcl_CreateCommand(interp, "sendextrt", SendExtRt, 0, 0);
-    Tcl_CreateCommand(interp, "sendgrp", SendGroup, 0, 0);
-    Tcl_CreateCommand(interp, "leavegrp", LeaveGroup, 0, 0);
     // Read additional TCL commands
     namlen = strlen(INSTALL_DIR) + strlen(sim_tcl_src);
     filename = new char[namlen+1];
@@ -319,7 +290,10 @@ int Tcl_AppInit(Tcl_Interp *interp)
     // Listen for simulated nodes that are initializing
     listen(fd, 150);
     // Start timer ticks
-    Tk_CreateTimerHandler(1000/TICKS_PER_SECOND, tick, 0);
+    //ATUL
+    //Tk_CreateTimerHandler(1000/TICKS_PER_SECOND, tick, 0);
+	signal(SIGALRM, tick);
+	ualarm((1000/TICKS_PER_SECOND)*1000, 0);
     return(TCL_OK);
 }
 
@@ -350,8 +324,8 @@ void SimCtl::incoming_call()
 /* Tick processing. If all nodes have responded, increase
  * the current time and send out a new round of ticks.
  */
-
-void tick(ClientData)
+//ATUL
+void tick(int sig)
 
 {
     bool all_responded=true;
@@ -438,7 +412,9 @@ void tick(ClientData)
         ;
 
     // Regardless, schedule next tick() invocation
-    Tk_CreateTimerHandler(1000/TICKS_PER_SECOND, tick, 0);
+    //Tk_CreateTimerHandler(1000/TICKS_PER_SECOND, tick, 0);
+	signal(SIGALRM, tick);
+	ualarm((1000/TICKS_PER_SECOND)*1000, 0);
 }
 
 /* I/0 activity on the connection to a simulated router.
@@ -513,35 +489,6 @@ void SimCtl::simnode_handler_read(int fd)
 	    if (Tcl_VarEval(sim->interp, tcl_command, 0) != TCL_OK)
 	        printf("ping_reply: %s\n", sim->interp->result);
 	    break;
-	  case SIM_ICMP_ERROR:
-	    IcmpErrMsg *errmsg;
-	    errmsg = (IcmpErrMsg *)msg;
-	    addr.s_addr = hton32(errmsg->src);
-	    sprintf(tcl_command, "icmp_error %d %s %d %d %d",
-		    subtype, inet_ntoa(addr), errmsg->type, errmsg->code,
-		    errmsg->msd);
-	    if (Tcl_VarEval(sim->interp, tcl_command, 0) != TCL_OK)
-	        printf("icmp_error: %s\n", sim->interp->result);
-	    break;
-	  case SIM_TRACEROUTE_TTL:
-	    TrTtlMsg *ttlm;
-	    ttlm = (TrTtlMsg *)msg;
-	    sprintf(tcl_command, "traceroute_ttl %d %d",
-		    subtype, ttlm->ttl);
-	    if (Tcl_VarEval(sim->interp, tcl_command, 0) != TCL_OK)
-	        printf("traceroute_ttl: %s\n", sim->interp->result);
-	    break;
-	  case SIM_TRACEROUTE_TMO:
-	    sprintf(tcl_command, "print_session %d \"* \"", subtype);
-	    if (Tcl_VarEval(sim->interp, tcl_command, 0) != TCL_OK)
-	        printf("print_session: %s\n", sim->interp->result);
-	    break;
-	  case SIM_PRINT_SESSION:
-	    text_msg=(char *)msg;
-	    sprintf(tcl_command, "print_session %d \"%s\"", subtype,text_msg);
-	    if (Tcl_VarEval(sim->interp, tcl_command, 0) != TCL_OK)
-	        printf("print_session: %s\n", sim->interp->result);
-	    break;
 	  default:
 	    addr.s_addr = node->id();
 	    printf("Bad type %d from %s", type, inet_ntoa(addr));
@@ -579,9 +526,12 @@ void SimCtl::restart_node(SimNode *node, InAddr id, int fd, uns16 home_port)
     send_addrmap_increment(0, newnode);
     // Download node's configuration
     addr.s_addr = hton32(newnode->id());
+#if 0
     if (Tcl_VarEval(sim->interp,"sendcfg ", inet_ntoa(addr),0) != TCL_OK)
         printf("sendcfg: %s\n", sim->interp->result);
-
+#endif
+	//Send configuration details to a particular router-id
+	sendCfgToRouterId(inet_ntoa(addr));
     // Delete previous router
     // Also frees message space
     delete node;
@@ -611,7 +561,10 @@ void SimCtl::send_addrmap(SimNode *node)
     int size;
     IfMap *map;
     AddrMap *addrmap;
-
+	
+	/* ATUL1 */
+	/* Function for displaying AVL tree */
+	//iter.displayTree();
     if (!(size = (ifmaps.size() * sizeof(*addrmap))))
 	return;
     msg = new byte[size];
@@ -732,178 +685,11 @@ void SimCtl::delete_router(SimNode *node)
     delete node;
 }
 
-/* Toggle the operation state of a simulated router.
- */
-
-int ToggleRouter(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        Tcl_VarEval(interp, "startrtr ", argv[1], 0);
-    else
-        node->pktdata.queue_xpkt(NULL, SIM_SHUTDOWN, 0, 0);
-
-    return(TCL_OK);
-}
-
-/* Restart a simulated router.
- * If it is not running, simply start it.
- */
-
-int RestartRouter(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        Tcl_VarEval(interp, "startrtr ", argv[1], 0);
-    else {
-	sim->simnodes.remove(node);
-	sim->restart_node(node, node->id(), node->fd, node->home_port);
-    }
-
-    return(TCL_OK);
-}
-
-/* Perform a hitless restart of a simulated router.
- * If it is not running, simply start it.
- */
-
-int HitlessRestart(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-    HitlessRestartMsg m;
-
-    m.period = 100;
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        Tcl_VarEval(interp, "startrtr ", argv[1], 0);
-    else if (node->awaiting_htl_restart) {
-	// Complete hitless restart
-        in_addr addr;
-        node->awaiting_htl_restart =  false;
-        node->pktdata.queue_xpkt(&m, SIM_RESTART_HITLESS, 0, sizeof(m));
-	// Download node's configuration
-	addr.s_addr = hton32(node->id());
-	if (Tcl_VarEval(sim->interp,"sendcfg ", inet_ntoa(addr),0) != TCL_OK)
-	    printf("sendcfg: %s\n", sim->interp->result);
-    }
-    else {
-        // Prepare for hitless restart
-        node->awaiting_htl_restart = true;
-        node->pktdata.queue_xpkt(&m, SIM_RESTART_HITLESS, 0, sizeof(m));
-    }
-    return(TCL_OK);
-}
-
-/* Start a ping session in the specified router.
- */
-
-int StartPing(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-    PingStartMsg m;
-    uns16 s_id;
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.src = ntoh32(inet_addr(argv[2]));
-    m.dest = ntoh32(inet_addr(argv[3]));
-    m.ttl = atoi(argv[4]);
-    s_id = atoi(argv[5]);
-    node->pktdata.queue_xpkt(&m, SIM_START_PING, s_id, sizeof(m));
-
-    return(TCL_OK);
-}
-
-/* Stop a ping session in the specified router.
- */
-
-int StopPing(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-    uns16 s_id;
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    s_id = atoi(argv[2]);
-    node->pktdata.queue_xpkt(0, SIM_STOP_PING, s_id, 0);
-
-    return(TCL_OK);
-}
-
-/* Start a traceroute session in the specified router.
- */
-
-int StartTraceroute(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-    PingStartMsg m;
-    uns16 s_id;
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.dest = ntoh32(inet_addr(argv[3]));
-    m.ttl = atoi(argv[4]);
-    s_id = atoi(argv[5]);
-    node->pktdata.queue_xpkt(&m, SIM_START_TR, s_id, sizeof(m));
-
-    return(TCL_OK);
-}
-
-/* Start a multicast traceroute session in the specified router.
- */
-
-int StartMtrace(ClientData, Tcl_Interp *interp, int, char *argv[])
-
-{
-    InAddr id;
-    SimNode *node;
-    MTraceHdr m;
-    uns16 s_id;
-    InAddr net;
-    InMask mask;
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.src = ntoh32(inet_addr(argv[2]));
-    get_prefix(argv[3], net, mask);
-    m.dest = net;
-    m.group = ntoh32(inet_addr(argv[4]));
-    s_id = atoi(argv[5]);
-    m.ttl_qid = atoi(argv[6]); // phyint of destination net
-    node->pktdata.queue_xpkt(&m, SIM_START_MTRACE, s_id, sizeof(m));
-
-    return(TCL_OK);
-}
-
 /* Determine whether an address falls under a particular
  * prefix.
  */
 
-int PrefixMatch(ClientData, Tcl_Interp *interp, int, char *argv[])
+int PrefixMatch(ClientData, Tcl_Interp *interp, int, const char *argv[])
 
 {
     InAddr net;
@@ -911,7 +697,8 @@ int PrefixMatch(ClientData, Tcl_Interp *interp, int, char *argv[])
     InAddr addr;
 
     Tcl_SetResult(interp, "1", TCL_STATIC);
-    if (get_prefix(argv[1], net, mask)) {
+	/* ATUL */
+    if (get_prefix((char *)argv[1], net, mask)) {
         addr = ntoh32(inet_addr(argv[2]));
 	if ((addr & mask) == net)
 	    Tcl_SetResult(interp, "0", TCL_STATIC);
@@ -922,35 +709,18 @@ int PrefixMatch(ClientData, Tcl_Interp *interp, int, char *argv[])
 /* Add mapping between IP address and owning router
  */
 
-int AddMapping(ClientData, Tcl_Interp *interp, int, char *argv[])
+int AddMapping(ClientData, Tcl_Interp *interp, int, const char *argv[])
 
 {
-    InAddr addr;
-    InAddr mask;
-    InAddr rtr;
-
-    if (get_prefix(argv[1], addr, mask)) {
-        if (mask != 0xffffffff)
-	    return(TCL_OK);
-    } else
-        addr = ntoh32(inet_addr(argv[1]));
-    rtr = ntoh32(inet_addr(argv[2]));
-    sim->store_mapping(addr, rtr);
     return(TCL_OK);
 }
 
 /* Add mapping between network and attached router
  */
 
-int AddNetMember(ClientData, Tcl_Interp *interp, int, char *argv[])
+int AddNetMember(ClientData, Tcl_Interp *interp, int, const char *argv[])
 
 {
-    uns16 port;
-    InAddr rtr;
-
-    port = atoi(argv[1]);
-    rtr = ntoh32(inet_addr(argv[2]));
-    sim->store_mapping(port, rtr);
     return(TCL_OK);
 }
 
@@ -972,7 +742,7 @@ void SimCtl::store_mapping(uns32 port_or_addr, uns32 rtr)
 /* Stop the simulated time.
  */
 
-int TimeStop(ClientData, Tcl_Interp *, int, char *[])
+int TimeStop(ClientData, Tcl_Interp *, int, const char *[])
 
 {
     sim->frozen = true;
@@ -982,7 +752,7 @@ int TimeStop(ClientData, Tcl_Interp *, int, char *[])
 /* Resum the simulated time.
  */
 
-int TimeResume(ClientData, Tcl_Interp *, int, char *[])
+int TimeResume(ClientData, Tcl_Interp *, int, const char *[])
 
 {
     sim->frozen = false;
@@ -994,7 +764,7 @@ int TimeResume(ClientData, Tcl_Interp *, int, char *[])
  * If first time, create OSPF protocol instance.
  */
 
-int SendGeneral(ClientData, Tcl_Interp *, int, char *argv[])
+int SendGeneral(ClientData, Tcl_Interp *, int, const char *argv[])
 
 {
     CfgGen m;
@@ -1014,7 +784,8 @@ int SendGeneral(ClientData, Tcl_Interp *, int, char *argv[])
     m.max_rxmt_window = 8;
     m.max_dds = 2;
     m.host_mode = atoi(argv[2]);
-    m.log_priority = 2;
+	/* ATUL */
+    m.log_priority = 0;
     m.refresh_rate = 6000;
     m.PPAdjLimit = atoi(argv[4]);
     m.random_refresh = atoi(argv[5]);
@@ -1026,7 +797,7 @@ int SendGeneral(ClientData, Tcl_Interp *, int, char *argv[])
 /* Download configuration of a single area
  */
 
-int SendArea(ClientData, Tcl_Interp *, int, char *argv[])
+int SendArea(ClientData, Tcl_Interp *, int, const char *argv[])
 
 {
     CfgArea m;
@@ -1052,7 +823,7 @@ int SendArea(ClientData, Tcl_Interp *, int, char *argv[])
  * for point-to-point addresses, the other end of the link.
  */
 
-int SendInterface(ClientData, Tcl_Interp *, int, char *argv[])
+int SendInterface(ClientData, Tcl_Interp *, int, const char *argv[])
 
 {
     CfgIfc m;
@@ -1085,7 +856,8 @@ int SendInterface(ClientData, Tcl_Interp *, int, char *argv[])
     port = atoi(argv[2]);
     m.address = ntoh32(inet_addr(argv[5]));
     m.phyint = port;
-    get_prefix(argv[8], net, mask);
+	/* ATUL */
+    get_prefix((char *)argv[8], net, mask);
     m.mask = mask;
     m.mtu = (m.IfType == IFT_BROADCAST ? 1500 : 2048);
     m.IfIndex = atoi(argv[7]);
@@ -1127,73 +899,7 @@ int SendInterface(ClientData, Tcl_Interp *, int, char *argv[])
     return(TCL_OK);
 }
 
-int SendVL(ClientData, Tcl_Interp *, int, char *argv[])
-{
-    CfgVL m;
-    InAddr id;
-    SimNode *node;
-    int len = sizeof(m);
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.nbr_id = ntoh32(inet_addr(argv[3]));
-    m.transit_area = ntoh32(inet_addr(argv[2]));
-    m.xmt_dly = 1;
-    m.rxmt_int = 5;
-    m.hello_int = 10;
-    m.dead_int = 60;
-    m.auth_type = 0;
-    memset(m.auth_key, 0, 8);
-    node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_VL, len);
-
-    return(TCL_OK);
-}
-
-int SendNeighbor(ClientData, Tcl_Interp *, int, char *argv[])
-{
-    CfgNbr m;
-    InAddr id;
-    SimNode *node;
-    int len = sizeof(m);
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.nbr_addr = ntoh32(inet_addr(argv[2]));
-    m.dr_eligible = atoi(argv[3]);
-    node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_Nbr, len);
-
-    return(TCL_OK);
-}
-
-int SendAggregate(ClientData, Tcl_Interp *, int, char *argv[])
-{
-    CfgRnge m;
-    InAddr net;
-    InAddr mask;
-    InAddr id;
-    SimNode *node;
-    int len = sizeof(m);
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    if (get_prefix(argv[3], net, mask)) {
-	m.net = net;
-	m.mask = mask;
-	m.area_id = ntoh32(inet_addr(argv[2]));
-	m.no_adv = atoi(argv[4]);
-	node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_Range, len);
-    }
-
-    return(TCL_OK);
-}
-
-int SendHost(ClientData, Tcl_Interp *, int, char *argv[])
+int SendHost(ClientData, Tcl_Interp *, int, const char *argv[])
 {
     CfgHost m;
     InAddr net;
@@ -1206,7 +912,8 @@ int SendHost(ClientData, Tcl_Interp *, int, char *argv[])
     if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
         return(TCL_OK);
 
-    if (get_prefix(argv[2], net, mask)) {
+	/* ATUL */
+    if (get_prefix((char *)argv[2], net, mask)) {
 	m.net = net;
 	m.mask = mask;
 	m.area_id = ntoh32(inet_addr(argv[3]));
@@ -1217,75 +924,188 @@ int SendHost(ClientData, Tcl_Interp *, int, char *argv[])
     return(TCL_OK);
 }
 
-int SendExtRt(ClientData, Tcl_Interp *, int, char *argv[])
+
+//ATUL
+//Copy functions
+int SendGeneralCopy(char *args[])
+
 {
-    CfgExRt m;
-    InAddr net;
-    InMask mask;
+    CfgGen m;
     InAddr id;
     SimNode *node;
     int len = sizeof(m);
 
-    id = ntoh32(inet_addr(argv[1]));
+    id = ntoh32(inet_addr(args[0]));
     if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
+        return(1);
 
-    if (get_prefix(argv[2], net, mask)) {
+    m.lsdb_limit = 0;
+    m.mospf_enabled = atoi(args[2]);
+    m.inter_area_mc = 1;
+    m.ovfl_int = 300;
+    m.new_flood_rate = 1000;
+    m.max_rxmt_window = 8;
+    m.max_dds = 2;
+    m.host_mode = atoi(args[1]);
+	/* ATUL */
+    m.log_priority = 0;
+    m.refresh_rate = 6000;
+    m.PPAdjLimit = atoi(args[3]);
+    m.random_refresh = atoi(args[4]);
+    node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_Gen, len);
+
+    return(1);
+}
+
+int SendAreaCopy(char *args[])
+
+{
+    CfgArea m;
+    InAddr id;
+    SimNode *node;
+    int len = sizeof(m);
+
+    id = ntoh32(inet_addr(args[1]));
+    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
+        return(1);
+
+    m.area_id = ntoh32(inet_addr(args[0]));
+    m.stub = atoi(args[2]);
+    m.dflt_cost = atoi(args[3]);
+    m.import_summs = atoi(args[4]);
+    node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_Area, len);
+
+    return(1);
+}
+
+int SendInterfaceCopy(char *args[])
+
+{
+    CfgIfc m;
+    InAddr id;
+    SimNode *node;
+    int len = sizeof(m);
+    int port;
+    InAddr net;
+    InAddr mask;
+    int command;
+    bool enabled;
+    bool run_ospf;
+
+    id = ntoh32(inet_addr(args[0]));
+    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
+        return(1);
+
+    // Figure out interface type
+    if (strcmp(args[2], "broadcast") == 0)
+	m.IfType = IFT_BROADCAST;
+    else if (strcmp(args[2], "pp") == 0)
+	m.IfType = IFT_PP;
+    else if (strcmp(args[2], "nbma") == 0)
+	m.IfType = IFT_NBMA;
+    else if (strcmp(args[2], "ptmp") == 0)
+	m.IfType = IFT_P2MP;
+    else
+        return(TCL_ERROR);
+
+    port = atoi(args[1]);
+    m.address = ntoh32(inet_addr(args[4]));
+    m.phyint = port;
+	/* ATUL */
+    get_prefix((char *)args[7], net, mask);
+    m.mask = mask;
+    m.mtu = (m.IfType == IFT_BROADCAST ? 1500 : 2048);
+    m.IfIndex = atoi(args[6]);
+    m.area_id = ntoh32(inet_addr(args[3]));
+    m.dr_pri = atoi(args[12]);
+    m.xmt_dly = 1;
+    m.rxmt_int = 5;
+    m.hello_int = 10;
+    m.if_cost = atoi(args[5]);
+    m.dead_int = 40;
+    m.poll_int = 60;
+    m.auth_type = 0;
+    memset(m.auth_key, 0, 8);
+    m.mc_fwd = 1;
+    m.demand = atoi(args[8]);
+    m.passive = atoi(args[10]);
+    m.igmp = ((m.IfType == IFT_BROADCAST) ? 1 : 0);
+    enabled = (atoi(args[9]) != 0);
+    run_ospf = (atoi(args[11]) != 0);
+    command = (enabled && run_ospf) ? SIM_CONFIG : SIM_CONFIG_DEL;
+    node->pktdata.queue_xpkt(&m, command, CfgType_Ifc, len);
+
+    if (m.IfType == IFT_BROADCAST || m.IfType == IFT_NBMA) {
+        CfgExRt rtm;
+	rtm.net = net;
+	rtm.mask = mask;
+	rtm.type2 = 0;
+	rtm.mc = 0;
+	rtm.direct = 1;
+	rtm.noadv = !run_ospf;
+	rtm.cost = 1;
+	rtm.gw = 0;
+	rtm.phyint = 0;
+	rtm.tag = 0;
+	command = (enabled && !run_ospf) ? SIM_CONFIG : SIM_CONFIG_DEL;
+	node->pktdata.queue_xpkt(&rtm, command, CfgType_Route, len);
+    }
+
+    return(1);
+}
+
+int SendHostCopy(char *args[])
+{
+    CfgHost m;
+    InAddr net;
+    InAddr mask;
+    InAddr id;
+    SimNode *node;
+    int len = sizeof(m);
+
+    id = ntoh32(inet_addr(args[0]));
+    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
+        return(1);
+
+	/* ATUL */
+    if (get_prefix((char *)args[1], net, mask)) {
 	m.net = net;
 	m.mask = mask;
-	m.type2 = (atoi(argv[4]) == 2);
-	m.mc = 0;
-	m.direct = 0;
-	m.noadv = (atoi(argv[6]) != 0);
-	m.cost = atoi(argv[5]);
-	m.gw = ntoh32(inet_addr(argv[3]));
-	m.phyint = (m.gw != 0) ? -1 : 0;
-	m.tag = 0;
-	node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_Route, len);
+	m.area_id = ntoh32(inet_addr(args[2]));
+	m.cost = 0;
+	node->pktdata.queue_xpkt(&m, SIM_CONFIG, CfgType_Host, len);
     }
-    return(TCL_OK);
+
+    return(1);
 }
 
-/* Inform the simulated router of a group member on one of
- * its attached interfaces.
- */
+int AddMappingCopy(char *args[])
 
-int SendGroup(ClientData, Tcl_Interp *, int, char *argv[])
 {
-    GroupMsg m;
-    InAddr id;
-    SimNode *node;
-    int len = sizeof(m);
-
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.phyint = atoi(argv[3]);
-    m.group = ntoh32(inet_addr(argv[2]));
-    node->pktdata.queue_xpkt(&m, SIM_ADD_MEMBER, 0, len);
-    return(TCL_OK);
+    InAddr addr;
+    InAddr mask;
+    InAddr rtr;
+	/* ATUL */
+    if (get_prefix((char *)args[0], addr, mask)) {
+        if (mask != 0xffffffff)
+	    return(1);
+    } else
+        addr = ntoh32(inet_addr(args[0]));
+    rtr = ntoh32(inet_addr(args[1]));
+    sim->store_mapping(addr, rtr);
+    return(1);
 }
 
-/* Similarly, a group member has left on one of the
- * attached interfaces.
- */
+int AddNetMemberCopy(char *args[])
 
-int LeaveGroup(ClientData, Tcl_Interp *, int, char *argv[])
 {
-    GroupMsg m;
-    InAddr id;
-    SimNode *node;
-    int len = sizeof(m);
+    uns16 port;
+    InAddr rtr;
 
-    id = ntoh32(inet_addr(argv[1]));
-    if (!(node = (SimNode *) sim->simnodes.find(id, 0)))
-        return(TCL_OK);
-
-    m.phyint = atoi(argv[3]);
-    m.group = ntoh32(inet_addr(argv[2]));
-    node->pktdata.queue_xpkt(&m, SIM_DEL_MEMBER, 0, len);
-    return(TCL_OK);
+    port = atoi(args[0]);
+    rtr = ntoh32(inet_addr(args[1]));
+    sim->store_mapping(port, rtr);
+    return(1);
 }
 
 /* Utility to parse prefixes. Returns false if the
@@ -1399,3 +1219,1138 @@ vlink 10.0.0.4 10.0.0.6 0.0.0.3\n\
 aggr 10.0.0.1 0.0.0.2 10.1.0.0/16 0\n\
 aggr 10.0.0.2 0.0.0.1 10.2.0.0/16 0\n\
 aggr 10.0.0.3 0.0.0.1 10.2.0.0/16 0\n";
+
+
+
+
+/* Changes for parsing and reading /etc/ospf.conf file directly */
+/* MACROS */
+/* #define  OSPF_CONF_FILE  "/etc/ospf.conf" */
+/* #define OSPF_CONF_FILE "/home/anandan/timepass_programs/ospf1.conf" */
+#define OSPF_CONF_FILE "/home/anandan/timepass_programs/ospf.conf"
+#define MAX_LINE_SIZE   128
+#define MAXNO_OF_ROUTERIDS  25
+#define MAXNO_OF_INTERFACES 75
+#define MAXNO_OF_AREAS      25
+#define MAXNO_OF_ATTRIBUTES 25  /*Max no of attributes*/
+#define MAXNO_OF_CHARS      25
+#define MAXNO_OF_NETWORKS   25
+#define MAXNO_OF_HOSTS      25
+
+/* globals */
+char *routers[MAXNO_OF_ROUTERIDS] =  {0};
+char **router_attrs[MAXNO_OF_ROUTERIDS] = {0};
+/* char *areas[]; */
+char ***area_attrs[MAXNO_OF_ROUTERIDS] = {0};
+char *port_index[MAXNO_OF_INTERFACES] = {0};
+char *interfaces[MAXNO_OF_INTERFACES] = {0};
+char **interface_attrs[MAXNO_OF_INTERFACES] = {0};
+char **network_attrs[MAXNO_OF_NETWORKS] = {0};
+char **host_attrs[MAXNO_OF_HOSTS] = {0};
+char **addr_mappings[MAXNO_OF_INTERFACES] = {0};
+char **addr_net_memships[MAXNO_OF_INTERFACES] = {0};
+char *args[MAXNO_OF_ATTRIBUTES] = {0};
+int  portno = 0;
+int  phy_portno = 0;
+
+void initMemory();
+int getLine(int fd, char *lineStr);
+void proc_router(char* token2, char* token3, char* token4, char *token5);
+void proc_broadcast(char *token2, char *token3, char *token4, char *token5, char *token6);
+void proc_interface(char *token2, char *token3, char *token4, char *token5, char *token6);
+void proc_pplink(char *token2, char *token3, char *token4, char *token5, char *token6, char *token7, char *token8, char *token9);
+void proc_loopback(char *token2, char *token3, char *token4);
+
+int read_config_file(char *cfgfile)
+{
+    int fd;
+    char *lineStr = NULL;
+    char *token1 = NULL;
+    char *token2 = NULL;
+    char *token3 = NULL;
+    char *token4 = NULL;
+    char *token5 = NULL;
+    char *token6 = NULL;
+    char *token7 = NULL;
+    char *token8 = NULL;
+    char *token9 = NULL;
+    char *saveptr = NULL, *str = NULL;
+    mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+
+    initMemory();
+    /* main parsing logic */
+    if ((fd = open(cfgfile, O_RDONLY)) == -1)
+    {
+        printf("Cannot open /etc/osopf/.conf file. Exiting.\n");
+        exit(1);
+    }
+
+    if(fd == -1) {
+        printf("File descriptor is NULL. \n");
+        exit(1);
+    }
+
+    lineStr = (char *) malloc(sizeof(char) * MAX_LINE_SIZE);
+    str = lineStr;
+
+    while(getLine(fd, str))
+    {
+        token1 = strtok_r(str, " ", &saveptr);
+        token2 = strtok_r(NULL, " ", &saveptr);
+        token3 = strtok_r(NULL, " ", &saveptr);
+        token4 = strtok_r(NULL, " ", &saveptr);
+        token5 = strtok_r(NULL, " ", &saveptr);
+        token6 = strtok_r(NULL, " ", &saveptr);
+        token7 = strtok_r(NULL, " ", &saveptr);
+        token8 = strtok_r(NULL, " ", &saveptr);
+        token9 = strtok_r(NULL, " ", &saveptr);
+
+        if(strcmp(token1, "router") == 0) {
+            proc_router(token2, token3, token4, token5);
+        } else if(strcmp(token1, "broadcast") == 0) {
+            proc_broadcast(token2, token3, token4, token5, token6);
+        } else if(strcmp(token1, "pplink") == 0) {
+            proc_pplink(token2, token3, token4, token5, token6, token7, token8, token9);
+        } else if(strcmp(token1, "interface") == 0) {
+            proc_interface(token2, token3, token4, token5, token6);
+        } else if(strcmp(token1, "loopback") == 0) {
+            proc_loopback(token2, token3, token4);
+        } /* Can be extended in future further */
+        str = lineStr;
+    }
+    close(fd);
+}
+
+bool get_prefix_func(char *prefix, unsigned int *net, unsigned int *mask)
+
+{
+    char *string;
+    char temp[20];
+    char *netstr;
+    int len;
+
+    strncpy(temp, prefix, sizeof(temp));
+    string = temp;
+    if (!(netstr = strsep(&string, "/")) || string == 0)
+    return(false);
+    *net = ntohl(inet_addr(netstr));
+    len = atoi(string);
+    if (len < 0 || len > 32)
+    return(false);
+    *mask = masks[len];
+    return(true);
+}
+/* Determine whether an address falls under a particular
+ *  * prefix.
+ *   */
+
+int PrefixMatchFunc(char *args[])
+{
+    unsigned int net;
+    unsigned int mask;
+    unsigned int addr;
+
+    if (get_prefix_func((char *)args[0], &net, &mask)) {
+        addr = ntohl(inet_addr(args[1]));
+        if ((addr & mask) == net) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int getLine(int fd, char *lineStr)
+{
+    char ch;
+    int bytesread = 0;
+    int count = 0;
+
+    bytesread = read(fd, &ch, 1);
+    if(errno)
+        perror("bytesread read");
+
+    while(bytesread != 0 && bytesread != -1) {
+
+        if(ch == '\n')
+            break;
+        lineStr[count] = ch;
+        count++;
+        bytesread = read(fd, &ch, 1);
+    }
+    lineStr[count] = '\0';
+    if(bytesread == 0 || bytesread == -1)
+        return 0;
+    else
+        return 1;
+}
+
+void initMemory()
+{
+    int i,j;
+    char ***per_router_area_attr = NULL;
+    char **per_area_attr = NULL;
+
+    /* Allocate and initialize memory for router table and router attribute table. */
+
+    /* router_attrs = (char **)calloc(MAXNO_OF_ROUTERIDS, sizeof(char **)); */
+   for(i=0; i<MAXNO_OF_ROUTERIDS; i++) {
+        router_attrs[i] = (char **)calloc(MAXNO_OF_ATTRIBUTES, sizeof(char *));
+    }
+
+    /* Area atribute allocation. */
+    for(i=0; i<MAXNO_OF_ROUTERIDS; i++) {
+        area_attrs[i] = (char ***)calloc(MAXNO_OF_AREAS, sizeof(char *));
+        per_router_area_attr = area_attrs[i];
+        for(j=0; j<MAXNO_OF_AREAS; j++) {
+            per_router_area_attr[j] = (char **)calloc(MAXNO_OF_ATTRIBUTES, sizeof(char *));
+        }
+    }
+
+    /* Interface attribute allocation */
+    for(i=0; i<MAXNO_OF_INTERFACES; i++) {
+        interface_attrs[i] = (char **)calloc(MAXNO_OF_ATTRIBUTES, sizeof(char *));
+    }
+
+    /* Host attribute allocation */
+    for(i=0; i<MAXNO_OF_HOSTS; i++) {
+        host_attrs[i] = (char **)calloc(MAXNO_OF_ATTRIBUTES, sizeof(char *));
+    }
+
+    /* Network attribute allocation */
+    for(i=0; i<MAXNO_OF_NETWORKS; i++) {
+        network_attrs[i] = (char **)calloc(MAXNO_OF_NETWORKS, sizeof(char *));
+    }
+
+    /* Address Maps allocation */
+    for(i=0; i<MAXNO_OF_INTERFACES; i++) {
+        addr_mappings[i] = (char **)calloc(MAXNO_OF_INTERFACES, sizeof(char *));
+    }
+
+    /* Address Net Membership allocation */
+    for(i=0; i<MAXNO_OF_INTERFACES; i++) {
+        addr_net_memships[i] = (char **)calloc(MAXNO_OF_INTERFACES, sizeof(char *));
+    }
+}
+
+
+void proc_router(char* token2, char* token3, char* token4, char *token5)
+{
+    int router_index = 0, attr_index = 0;
+    bool    is_router_found = false;
+    char    **router_attr_addr = NULL;
+    int     no_of_routers = 0;
+
+    while((no_of_routers < MAXNO_OF_ROUTERIDS) && (routers[router_index] != NULL)) {
+        if(strcmp(routers[router_index], token2) == 0) {
+            is_router_found = true;
+            break;
+        }
+        router_index++;
+        no_of_routers++;
+    }
+
+    if(!is_router_found) {
+        /* Add the new entry router-id and it's attributes.*/
+        routers[router_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(routers[router_index], token2, MAXNO_OF_CHARS);
+        /* Copy router attributes now.*/
+        router_attr_addr = router_attrs[router_index];
+#if 0   
+        /* First attribute: inter area multicast */
+        strncpy(getInterAreaMulticast(), router_attr_addr[attr_index], MAX);
+        attr_index++;
+        /* Second attribute: y coordinate */
+        strncpy(getRoutermode(), router_attr_addr[attr_index], MAX);
+        attr_index++;
+#endif
+        /* Second attribute: host mode */
+        router_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(router_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+        /* Third attribute: mospf enabled */
+        router_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(router_attr_addr[attr_index], token5, MAXNO_OF_CHARS);
+        attr_index++;
+#if 0
+        /* Fourth attribute: PPAdjLimit */
+        strncpy(getPPAdjLimit(), router_attr_addr[attr_index], MAX);
+        attr_index++;
+#endif
+        /* Fourth attribute: PPAdjLimit */
+        router_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(router_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+        /* Fifth attribute: random refresh */
+        router_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(router_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+    } else {
+        /* Router found, update the details */
+    }
+}
+
+void proc_broadcast(char *token2, char *token3, char *token4, char *token5, char *token6)
+{
+    int     network_index = 0, attr_index = 0, no_of_networks = 0;
+    bool    is_broadcast_ntw_found = false;
+    char    **network_attr_addr = NULL;
+    char    *prefix = NULL, *area_id = NULL, *ifc_index = NULL, *demand_status = NULL;
+    char    phy_portno_str[MAXNO_OF_CHARS] = {0};
+
+
+    while((no_of_networks < MAXNO_OF_NETWORKS) && (network_attrs[network_index] != NULL) &&
+                        (*network_attrs[network_index] != NULL)) {
+#if 0
+        if(strcmp(broadcast_attr_addr[attr_index], token3) == 0) {
+            is_broadcast_ntw_found = true;
+            break;
+        }
+#endif
+        network_index++;
+        no_of_networks++;
+    }
+    /*Increment the portno for each broadcast network*/
+    phy_portno++;
+    sprintf(phy_portno_str, "%d", phy_portno);
+
+#if 0
+    if(!is_broadcast_ntw_found) {
+#endif
+    /* Copy interface attributes now.*/
+    network_attr_addr = network_attrs[network_index];
+
+    /* First attribute: prefix */
+    network_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(network_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+    /* Second attribute: area */
+    network_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(network_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+    attr_index++;
+    /* Third attribute: demand status. */
+    network_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(network_attr_addr[attr_index], token6, MAXNO_OF_CHARS);
+    attr_index++;
+    /* Third attribute: physical port_no.*/
+    network_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(network_attr_addr[attr_index], phy_portno_str, MAXNO_OF_CHARS);
+    attr_index++;
+#if 0   
+    } else {
+        /* Broadcast ntw found, update the details */
+        
+    }
+#endif
+}
+
+void proc_interface(char *token2, char *token3, char *token4, char *token5, char *token6)
+{
+    int interface_index = 0, network_index = 0, attr_index = 0;
+    bool    is_interface_found = false, is_broadcast_ntw_found = false;
+    char    **interface_attr_addr = NULL, **network_attr_addr = NULL;
+    char    *prefix = NULL, *area_id = NULL, *ifc_index = NULL, *demand_status = NULL;
+    int     no_of_interfaces = 0;
+    char    portno_str[MAXNO_OF_CHARS] = {0};
+    char    phy_portno_str[MAXNO_OF_CHARS] = {0};
+    char    ifc_index_str[MAXNO_OF_CHARS] = {0};
+    int     addr_map_index = 0, addr_net_memship_index = 0;
+    char    **addrmap_attr_addr = NULL, **addrnet_memship_attr_addr = NULL;
+    char    *args[10];
+	int		router_index = 0, area_index = 0;	
+    bool    is_area_found = false, is_router_found = false,  no_of_routers = 0, no_of_areas = 0;
+    char    **area_attr_addr = NULL, ***area_id_per_router_addr = NULL;
+
+    while(*network_attrs[network_index] != NULL) {
+        network_attr_addr = network_attrs[network_index];
+        args[0] = network_attr_addr[0];
+        args[1] = token3;
+        if(PrefixMatchFunc(args)) {
+            is_broadcast_ntw_found = true;
+#if 0
+            strncpy(broadcast_attr_addr[attr_index], prefix, MAX);
+            attr_index++;
+            strncpy(broadcast_attr_addr[attr_index], area_id, MAX);
+            attr_index++;
+            strncpy(broadcast_attr_addr[attr_index], demand_status, MAX);
+            attr_index++;
+#endif
+            prefix = network_attr_addr[0];
+            area_id = network_attr_addr[1];
+            demand_status = network_attr_addr[2];
+#if 0
+            if(network_attr_addr[3] == NULL) {
+                phy_portno++;
+                sprintf(phy_portno_str, "%d", phy_portno);
+                network_attr_addr[3] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+                strncpy(network_attr_addr[3], phy_portno_str, MAXNO_OF_CHARS);
+            } else {
+#endif
+                strncpy(phy_portno_str, network_attr_addr[3], MAXNO_OF_CHARS);
+#if 0
+            }
+#endif
+            break;
+        }
+        network_index++;
+    }
+
+	//Update area detail for the router-id
+	attr_index = 0;
+    /*Following is the area entry for the  router associated with the interface.*/
+    while((no_of_routers < MAXNO_OF_ROUTERIDS) && (routers[router_index] != NULL)) {
+        if(strcmp(routers[router_index], token2) == 0) {
+            is_router_found = true;
+            break;
+        }
+        router_index++;
+    }
+    if(is_router_found) {
+        /*Add the new entry area-id and it's attributes.*/
+        /*strncpy(token8, area[area_index], MAX);*/
+
+
+        /*Get addr of area attributes for the specified router now.*/
+        area_id_per_router_addr = area_attrs[router_index];
+
+        /*Search for the specific area-id.*/
+        while((no_of_areas < MAXNO_OF_AREAS) && (area_id_per_router_addr[area_index] != NULL) &&
+                                   (*area_id_per_router_addr[area_index] != NULL)) {
+            if(strcmp(*area_id_per_router_addr[area_index], area_id) == 0) {
+                is_area_found = true;
+                break;
+            }
+            area_index++;
+            no_of_areas++;
+        }
+
+        if(!is_area_found) {
+            /*Get addr of attribute deatils of a particular area-id for the specified router now.*/
+            area_attr_addr = area_id_per_router_addr[area_index];
+
+            /*First attribute: area-id*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], area_id, MAXNO_OF_CHARS);
+            attr_index++;
+            /*Second attribute: router-id*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+            attr_index++;
+            /*Third attribute: stub area*/
+            /*strncpy(isStub(), area_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+            attr_index++;
+            /*Fourth attribute: default cost*/
+            /*strncpy(token4, router_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+            attr_index++;
+            /*Fifth attribute: imported summary*/
+            /*strncpy(getImportSummary(), router_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+            attr_index++;
+        } else {
+            /*Area for that router found, update the details.*/
+        }
+    } else {
+        /*Router not found, create it for interface cmd.*/
+	}
+
+	//Update interface detail for the router-id
+    while((no_of_interfaces < MAXNO_OF_INTERFACES) && (interfaces[interface_index] != NULL)) {
+#if 0
+       if(strcmp(interfaces[interface_index], token3) == 0) {
+            is_interface_found = true;
+            break;
+        }
+#endif
+        interface_index++;
+        no_of_interfaces;
+    }
+
+#if 0   
+    network_index = formPrefix(token3, prefix);
+    area_id = network_attrs[network_index][1];
+
+    /* Update area_id in the area table for router-id token2.*/
+#endif
+    attr_index = 0;
+    if(!is_interface_found) {
+        /* generate unique port no */
+        portno++;
+        /*sprintf(phy_portno_str, "%d", phy_portno);*/
+        sprintf(ifc_index_str, "%d", portno);
+        /*Copy port no to port_index array*/
+        port_index[interface_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(port_index[interface_index], phy_portno_str, MAXNO_OF_CHARS);
+
+        /*Add the new entry interface address and it's attributes.*/
+        interfaces[interface_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interfaces[interface_index], token3, MAXNO_OF_CHARS);
+
+        /*Copy interface attributes now.*/
+        interface_attr_addr = interface_attrs[interface_index];
+
+        /*First attribute: router-id*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Second attribute: portno*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], port_index[interface_index], MAXNO_OF_CHARS);
+        attr_index++;
+        /*Third attribute: interface type.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "broadcast", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Fourth attribute: area-id.*/
+        /*get area-id from broadcast attribute*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*strncpy(area_id, interface_attr_addr[attr_index], MAX);*/
+        strncpy(interface_attr_addr[attr_index], area_id, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Fifth attribute: interface address.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Sixth attribute: cost*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token4, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Seventh attribute: interface index.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], ifc_index_str, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Eight attribute: prefix*/
+        /*get prefix corresponding to the interface address.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+#if 0
+        if(prefix)
+            strncpy(interface_attr_addr[attr_index], prefix, MAXNO_OF_CHARS);
+        else 
+#endif
+            strncpy(interface_attr_addr[attr_index], prefix, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Ninth attribute: demand status.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*demand_status = getDemandStatus(token3);*/
+        strncpy(interface_attr_addr[attr_index], demand_status, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Tenth attribute: enable status*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Eleventh attribute: passive status*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token5, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Twelveth attribute: ospf enabled*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token6, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Thirteenth attribute: dr priority*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*strncpy(getDrPri(), interface_attr_addr[attr_index], MAX);*/
+        strncpy(interface_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+        attr_index++;
+    } else {
+        /*Interface found, update the details*/
+    }
+
+    /*Add to addr_mappings table*/
+    while(*addr_mappings[addr_map_index] != NULL) {
+        addr_map_index++;
+    }
+    /*Add the address*/
+    addrmap_attr_addr = addr_mappings[addr_map_index];
+    attr_index = 0;
+    /*First attribute: router address*/
+    /*Need to remove subnet no from prefix.*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+
+    /*Add to net membership table*/
+    while(*addr_net_memships[addr_net_memship_index] != NULL) {
+        addr_net_memship_index++;
+    }
+    /*Add the first address*/
+    addrnet_memship_attr_addr = addr_net_memships[addr_net_memship_index];
+   attr_index = 0;
+    /*First attribute: port no*/
+    addrnet_memship_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrnet_memship_attr_addr[attr_index], phy_portno_str, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrnet_memship_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrnet_memship_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+}
+
+void proc_pplink(char *token2, char *token3, char *token4, char *token5, char *token6, char *token7, char *token8, char *token9)
+{
+    int     area_index = 0, router_index = 0, interface_index = 0, attr_index = 0, no_of_routers = 0, no_of_areas = 0;
+    bool    is_area_found = false, is_router_found = false;
+    char    **area_attr_addr = NULL, ***area_id_per_router_addr = NULL;
+    bool    is_interface_found = false;
+    char    **interface_attr_addr = NULL;
+    char    *prefix = NULL, *area_id = NULL, *ifc_index = NULL, *demand_status = NULL;
+    int     no_of_interfaces = 0;
+    char    phy_portno_str[MAXNO_OF_CHARS] = {0};
+    char    ifc_index_str[MAXNO_OF_CHARS] = {0};
+    char    **addrmap_attr_addr = NULL, **addrnet_memship_attr_addr  = NULL;
+    int     addr_map_index = 0, addr_net_memship_index = 0;
+
+    /*pplink has two routers. Following is the area entry for first router*/
+    while((no_of_routers < MAXNO_OF_ROUTERIDS) && (routers[router_index] != NULL)) {
+        if(strcmp(routers[router_index], token2) == 0) {
+            is_router_found = true;
+            break;
+        }
+        router_index++;
+    }
+    if(is_router_found) {
+        /*Add the new entry area-id and it's attributes.*/
+        /*strncpy(token8, area[area_index], MAX);*/
+
+
+        /*Get addr of area attributes for the specified router now.*/
+        area_id_per_router_addr = area_attrs[router_index];
+
+        /*Search for the specific area-id.*/
+        while((no_of_areas < MAXNO_OF_AREAS) && (area_id_per_router_addr[area_index] != NULL) &&
+                                   (*area_id_per_router_addr[area_index] != NULL)) {
+            if(strcmp(*area_id_per_router_addr[area_index], token8) == 0) {
+                is_area_found = true;
+                break;
+            }
+            area_index++;
+            no_of_areas++;
+        }
+
+        if(!is_area_found) {
+            /*Get addr of attribute deatils of a particular area-id for the specified router now.*/
+            area_attr_addr = area_id_per_router_addr[area_index];
+
+            /*First attribute: area-id*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], token8, MAXNO_OF_CHARS);
+            attr_index++;
+            /*Second attribute: router-id*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+            attr_index++;
+            /*Third attribute: stub area*/
+            /*strncpy(isStub(), area_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+            attr_index++;
+            /*Fourth attribute: default cost*/
+            /*strncpy(token4, router_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+            attr_index++;
+            /*Fifth attribute: imported summary*/
+            /*strncpy(getImportSummary(), router_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+            attr_index++;
+        } else {
+            /*Area for that router found, update the details.*/
+        }
+    } else {
+        /*Router not found, create it for pplinks.*/
+    }
+
+    router_index = 0;
+    area_index = 0;
+   attr_index = 0;
+    is_area_found = false;
+    /*pplink has two routers. Following is the area entry for second router*/
+    while((no_of_routers < MAXNO_OF_ROUTERIDS) && (routers[router_index] != NULL)) {
+        if(strcmp(routers[router_index], token5) == 0) {
+            is_router_found = true;
+            break;
+        }
+        router_index++;
+    }
+
+    if(is_router_found) {
+        /*Get addr of area attributes for the specified router now.*/
+        area_id_per_router_addr = area_attrs[router_index];
+
+        /*Search for the specific area-id.*/
+        while((no_of_areas < MAXNO_OF_AREAS) && (area_id_per_router_addr[area_index] != NULL) &&
+                        (*area_id_per_router_addr[area_index] != NULL)) {
+            if(strcmp(*area_id_per_router_addr[area_index], token8) == 0) {
+                is_area_found = true;
+                break;
+            }
+            area_index++;
+        }
+
+        if(!is_area_found) {
+            /*Get addr of attribute deatils of a particular area-id for the specified router now.*/
+            area_attr_addr = area_id_per_router_addr[area_index];
+
+            /*First attribute: area-id*/
+           area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], token8, MAXNO_OF_CHARS);
+            attr_index++;
+            /*Second attribute: router-id*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], token5, MAXNO_OF_CHARS);
+            attr_index++;
+            /*Third attribute: stub area*/
+            /*strncpy(isStub(), area_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+            attr_index++;
+            /*Fourth attribute: default cost*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+            attr_index++;
+            /*Fifth attribute: imported summary*/
+            /*strncpy(getImportSummary(), router_attr_addr[attr_index], MAX);*/
+            area_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+            strncpy(area_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+            attr_index++;
+        } else {
+            /*Area for that router found, update the details.*/
+        }
+    } else {
+        /*Router found, update the details*/
+    }
+
+    interface_index = 0;
+    attr_index = 0;
+    /*Create or update interface table.*/
+#if 0
+    if(strcmp(token3, "0.0.0.0") != 0) {
+#endif
+    /*Update interface table with the address below.*/
+    while((no_of_interfaces < MAXNO_OF_INTERFACES) && (interfaces[interface_index] != NULL)) {
+#if 0
+        if(strcmp(interfaces[interface_index], token3) == 0) {
+            is_interface_found = true;
+            break;
+        }
+#endif
+        interface_index++;
+        no_of_interfaces++;
+    }
+
+    if(is_interface_found) {
+        /*Update details for the interface.*/
+
+    } else {
+        /*Create the interface with the details.*/
+        /*generate unique port no*/
+        /*portno = generate_unique_interface_portno();*/
+        portno++;
+        phy_portno++;
+        sprintf(phy_portno_str, "%d", phy_portno);
+        sprintf(ifc_index_str, "%d", portno);
+        /*Copy port no to port_index array*/
+        port_index[interface_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(port_index[interface_index], phy_portno_str, MAXNO_OF_CHARS);
+
+        /*Add the new entry interface address and it's attributes.*/
+        interfaces[interface_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interfaces[interface_index], token3, MAXNO_OF_CHARS);
+
+        /*Copy interface attributes now.*/
+        interface_attr_addr = interface_attrs[interface_index];
+
+        /*First attribute: router-id*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Second attribute: portno*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], port_index[interface_index], MAXNO_OF_CHARS);
+        attr_index++;
+        /*Third attribute: interface type.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "pp", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Fourth attribute: area-id.*/
+        /*get area-id from broadcast attribute*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token8, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Fifth attribute: interface address.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Sixth attribute: cost*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token4, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Seventh attribute: interface index.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], ifc_index_str, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Eight attribute: prefix*/
+        /*get prefix corresponding to the interface address.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+#if 0
+        prefix = formPrefix(token3);
+        if(prefix)
+            strncpy(interface_attr_addr[attr_index], prefix, MAXNO_OF_CHARS);
+        else 
+#endif
+            strncpy(interface_attr_addr[attr_index], "0.0.0.0/0", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Ninth attribute: demand status.*/
+        /*demand_status = getDemandStatus(token3);*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token9, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Tenth attribute: enable status*/
+        /*strncpy(isEnabled(), interface_attr_addr[attr_index], MAX);*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Eleventh attribute: passive status*/
+        /*strncpy(isPassive(), interface_attr_addr[attr_index], MAX);*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Twelveth attribute: ospf enabled*/
+        /*strncpy(isOspfEnabled(), interface_attr_addr[attr_index], MAX);*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Thirteenth attribute: dr priority*/
+        /*strncpy(getDrPri(), interface_attr_addr[attr_index], MAX);*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+    }
+#if 0
+    }
+    
+    if(strcmp(token6, "0.0.0.0") != 0) {
+#endif
+    attr_index = 0;
+    interface_index++;
+#if 0
+    /*Update interface table with the address below.*/
+    while((no_of_interfaces < MAXNO_OF_INTERFACES) && (interfaces[interface_index] != NULL)) {
+        if(strcmp(*interfaces[interface_index], token3) == 0) {
+            is_interface_found = true;
+            break;
+        }
+        interface_index++;
+    }
+#endif
+   if(is_interface_found) {
+        /*Update details for the interface.*/
+
+    } else {
+        /*Create the interface with the details.*/
+        /*generate unique port no*/
+        /*port_no = generate_unique_interface_portno();*/
+        portno++;
+        /*sprintf(portno_str, "%d", portno);*/
+        sprintf(ifc_index_str, "%d", portno);
+        /*Copy port no to port_index array*/
+        port_index[interface_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(port_index[interface_index], phy_portno_str, MAXNO_OF_CHARS);
+
+        /*Add the new entry interface address and it's attributes.*/
+        /*strncpy(token6, interfaces[interface_index], MAX);*/
+        interfaces[interface_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interfaces[interface_index], token6, MAXNO_OF_CHARS);
+
+        /*Copy interface attributes now.*/
+        interface_attr_addr = interface_attrs[interface_index];
+
+        /*First attribute: router-id*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token5, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Second attribute: portno*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], port_index[interface_index], MAXNO_OF_CHARS);
+        attr_index++;
+        /*Third attribute: interface type.*/
+       interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], "pp", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Fourth attribute: area-id.*/
+        /*get area-id from broadcast attribute*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token8, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Fifth attribute: interface address.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token6, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Sixth attribute: cost*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token7, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Seventh attribute: interface index.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], ifc_index_str, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Eight attribute: prefix*/
+        /*get prefix corresponding to the interface address.*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+#if 0
+        prefix = formPrefix(token3);
+        if(prefix)
+            strncpy(interface_attr_addr[attr_index], prefix, MAXNO_OF_CHARS);
+        else
+#endif
+            strncpy(interface_attr_addr[attr_index], "0.0.0.0/0", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Ninth attribute: demand status.*/
+        /*demand_status = getDemandStatus(token3);*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        strncpy(interface_attr_addr[attr_index], token9, MAXNO_OF_CHARS);
+        attr_index++;
+        /*Tenth attribute: enable status*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*strncpy(isEnabled(), interface_attr_addr[attr_index], MAX);*/
+        strncpy(interface_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Eleventh attribute: passive status*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*strncpy(isPassive(), interface_attr_addr[attr_index], MAX);*/
+        strncpy(interface_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Twelveth attribute: ospf enabled*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*strncpy(isOspfEnabled(), interface_attr_addr[attr_index], MAX);*/
+        strncpy(interface_attr_addr[attr_index], "1", MAXNO_OF_CHARS);
+        attr_index++;
+        /*Thirteenth attribute: dr priority*/
+        interface_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+        /*strncpy(getDrPri(), interface_attr_addr[attr_index], MAX);*/
+        strncpy(interface_attr_addr[attr_index], "0", MAXNO_OF_CHARS);
+        attr_index++;
+    }
+#if 0
+    }
+#endif
+    /*Add to address map table*/
+    while(*addr_mappings[addr_map_index] != NULL) {
+        addr_map_index++;
+    }
+    /*Add the first address*/
+    addrmap_attr_addr = addr_mappings[addr_map_index];
+    attr_index = 0;
+    /*First attribute: router address*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+
+    /*Add the second address*/
+    addr_map_index++;
+    addrmap_attr_addr = addr_mappings[addr_map_index];
+    attr_index = 0;
+    /*First attribute: router address*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token6, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token5, MAXNO_OF_CHARS);
+    attr_index++;
+
+    /*Add to net membership table*/
+    while(*addr_net_memships[addr_net_memship_index] != NULL) {
+        addr_net_memship_index++;
+    }
+    /*Add the first address*/
+    addrnet_memship_attr_addr = addr_net_memships[addr_net_memship_index];
+    attr_index = 0;
+    /*First attribute: port no*/
+    addrnet_memship_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrnet_memship_attr_addr[attr_index], phy_portno_str, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrnet_memship_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrnet_memship_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+
+    /*Add the second address*/
+    addr_net_memship_index++;
+    addrnet_memship_attr_addr = addr_net_memships[addr_net_memship_index];
+    attr_index = 0;
+    /*First attribute: router address*/
+    addrnet_memship_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrnet_memship_attr_addr[attr_index], phy_portno_str, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrnet_memship_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrnet_memship_attr_addr[attr_index], token5, MAXNO_OF_CHARS);
+    attr_index++;
+}
+
+
+void proc_loopback(char *token2, char *token3, char *token4)
+{
+    int     host_index = 0, attr_index = 0, no_of_hosts = 0;
+    bool    is_interface_found = false;
+    char    **host_attr_addr = NULL;
+    int     addr_map_index = 0;
+    char    **addrmap_attr_addr = NULL;
+
+    while((no_of_hosts < MAXNO_OF_HOSTS) && (host_attrs[host_index] != NULL) &&
+                            (*host_attrs[host_index] != NULL)) {
+        host_index++;
+        no_of_hosts++;
+    }
+
+    /*Copy host attributes now.*/
+    host_attr_addr = host_attrs[host_index];
+
+    host_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    /*First attribute: router-id*/
+    strncpy(host_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: prefix*/
+    host_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(host_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Third attribute: area*/
+    host_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(host_attr_addr[attr_index], token4, MAXNO_OF_CHARS);
+    attr_index++;
+
+    /*Add to addr_mappings table*/
+    while(*addr_mappings[addr_map_index] != NULL) {
+        addr_map_index++;
+    }
+    /*Add the address*/
+    addrmap_attr_addr = addr_mappings[addr_map_index];
+    attr_index = 0;
+    /*First attribute: router address*/
+    /*Need to remove subnet no from prefix.*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token3, MAXNO_OF_CHARS);
+    attr_index++;
+    /*Second attribute: router-id*/
+    addrmap_attr_addr[attr_index] = (char *)calloc(MAXNO_OF_CHARS, sizeof(char));
+    strncpy(addrmap_attr_addr[attr_index], token2, MAXNO_OF_CHARS);
+    attr_index++;
+}
+
+void startRouterCfg()
+{
+    int i = 0;
+    /*StartRouter msg for all routers*/
+    for(i=0; routers[i]; i++) {
+        args[0] = routers[i]; /*copy router-id*/
+        StartRouterCopy(args);
+    }
+}
+
+void sendAddMappingCfg()
+{
+    int j = 0;
+    char    **addrmap_attr_addr = NULL;
+    /*SendAddrMap msg for the all the interfaces.*/
+    for(j=0; *addr_mappings[j]; j++) {
+            addrmap_attr_addr = addr_mappings[j];
+            args[0] = addrmap_attr_addr[0];
+            args[1] = addrmap_attr_addr[1];
+            AddMappingCopy(args);
+    }
+}
+
+void sendAddNetMemberCfg()
+{
+    int j = 0;
+    char    **addrnet_memship_attr_addr = NULL;
+    /*SendAddNetMembership for all the interfaces.*/
+    for(j=0; *addr_net_memships[j]; j++) {
+            addrnet_memship_attr_addr = addr_net_memships[j];
+            args[0] = addrnet_memship_attr_addr[0];
+            args[1] = addrnet_memship_attr_addr[1];
+            AddNetMemberCopy(args);
+    }
+}
+
+void sendCfgToRouterId(char *routerId)
+{
+    int     i, j, k;
+    char    **router_attr_addr = NULL;
+    char    **interface_attr_addr = NULL;
+    char    **host_attr_addr = NULL;
+    char    **area_attr_addr = NULL, ***area_id_per_router_addr = NULL;
+
+    /*SendGeneral, SendArea and SendInterface msgs for all routers*/
+    for(i=0; routers[i]; i++) {
+			if(strcmp(routerId, routers[i]) != 0)
+				continue;
+            /*SendGeneral msg for the particular router.*/
+            j = 0;
+            args[j] = routers[i]; /*copy router-id*/
+            /*Go through router attributes and copy all.*/
+            j++;
+            /*Go through router attributes and copy all.*/
+            router_attr_addr = router_attrs[i];
+            while(router_attr_addr[j-1]) {
+                args[j] = router_attr_addr[j-1];
+                j++;
+            }
+            SendGeneralCopy(args);
+
+            area_id_per_router_addr = area_attrs[i];
+            /*SendArea msg for the all the areas to which router belongs.*/
+            for(j=0; *area_id_per_router_addr[j]; j++) {
+                k = 0;
+                area_attr_addr = area_id_per_router_addr[j];
+                while(area_attr_addr[k]) {
+                   args[k] = area_attr_addr[k];
+                    k++;
+                }
+                SendAreaCopy(args);
+            }
+
+            /*SendInterface msg for the all the interfaces which belongs to the router.*/
+            for(j=0; *interface_attrs[j]; j++) {
+                if(strcmp(*interface_attrs[j], routers[i]) == 0) { /*RouterId matched*/
+                    k = 0;
+                    /*args[k] = routers[i];*/ /*copy router-id*/
+                   /*Go through interface attributes and copy all.*/
+                    /*k++;*/
+                    interface_attr_addr = interface_attrs[j];
+                    while(interface_attr_addr[k]) {
+                        args[k] = interface_attr_addr[k];
+                        k++;
+                    }
+                    SendInterfaceCopy(args);
+                }
+            }
+
+            /*SendHost msg for the all the interfaces which belongs to the router.*/
+            for(j=0; *host_attrs[j]; j++) {
+                if(strcmp(*host_attrs[j], routers[i]) == 0) { /*RouterId matched*/
+                   host_attr_addr = host_attrs[j];
+                    k = 0;
+                    while(host_attr_addr[k]) {
+                        args[k] = host_attr_addr[k];
+                        k++;
+                    }
+					SendHostCopy(args);
+                }
+            }
+			break;
+    }
+}
+ 
